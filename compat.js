@@ -35,21 +35,21 @@ class CompatEngine{
    const i=(y*w+x)*4,l=lum(a,i),n=hash(x,y,ticks%1000,seed)-.5;
    const d=(bayer[(y%4)*4+x%4]/16-.5)*s.character*1.35;
    let v=l,levels=4,amount=1,pass=true,decay=0;
-   if(mode===2){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4);v=l+(2*l-left-right)*s.character*.7+n*s.signal*.18;}
+   if(mode===2){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4);v=l*(1-.35*s.character*((x/w-.5)**2+(y/h-.5)**2))+(2*l-left-right)*s.character*.93+(hash(x,y,0,seed)-.5)*s.signal*.30+n*s.signal*.05;}
    if(mode===3){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4);v=.5*l+.25*(left+right)+n*s.signal*(.08+.24*(1-l));levels=32;if(hash(0,y,ticks,seed)>1-s.signal*.045)v*=.45;}
-   if(mode===4){v=l*(.88-.32*Math.hypot(x/w-.5,y/h-.5)*s.character)+n*s.signal*.12;levels=16;}
+   if(mode===4){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4),up=lum(a,(Math.max(0,y-1)*w+x)*4),down=lum(a,(Math.min(h-1,y+1)*w+x)*4);const soft=.42*l+.145*(left+right+up+down);v=(l+(soft-l)*s.character)*(.94-.56*((x/w-.5)**2+(y/h-.5)**2)*s.character)+n*s.signal*.08;levels=16;}
    if(mode===5){const line=(y+.5)/h;pass=wrap?line>=prior||line<=this.phase:line>=prior&&line<=this.phase;v=s.scanMode>.5&&this.held&&!(wrap&&line<=this.phase)?lum(this.held,i):l;v+=n*s.signal*.15;levels=32;}
    if(mode===6){const slot=Math.floor(hash(x>>3,y>>3,0,seed)*8);pass=s.memory<.03||ticks%8===slot;amount=1-s.memory*.5;}
    if(mode===7){levels=32;decay=Math.exp(-dt/(.04+s.memory*2));}
-   if(mode===8){levels=8;const slots=2+Math.floor(s.memory*10),slot=Math.floor(hash(x>>3,y>>3,0,seed)*slots);pass=ticks%slots===slot&&hash(x>>3,y>>3,Math.floor(ticks/slots),seed)>s.signal*.7;}
-   v=clamp(Math.round(grade(v)*(levels-1)+d)/(levels-1));
-   if(mode<5&&!this.first)amount=1-s.memory*.65;
+   if(mode===8){levels=8;const slots=2+Math.floor(s.memory*12),bx=Math.floor(x/16),by=Math.floor(y/12),slot=Math.floor(hash(bx,by,0,seed)*slots);pass=(s.memory<.03&&s.signal<.03)||(ticks%slots===slot&&hash(bx,by,Math.floor(ticks/slots),seed)>s.signal*.82);}
+   v=clamp(Math.round(grade(v)*(levels-1)+d*(mode===4?.12:mode===8?.3:mode===2?.76:1))/(levels-1));
+   if(mode<5&&!this.first)amount=mode===0?1-Math.exp(-dt/(.008+s.memory*(v>lum(old,i)?.40:.11))):1-s.memory*(mode===2?.28:.55);
    if(mode===5&&this.first)v=0;
    if(this.first||pass){
     const ti=(Math.min(h-1,(y>>3)*8+4)*w+Math.min(w-1,(x>>3)*8+4))*4,tl=lum(a,ti);
     for(let k=0;k<3;k++){
-     let target=color(s.palette,v,k);
-     if(mode===1&&s.palette===0)target=clamp(.10+.77*v+(a[ti+k]/255-tl)*s.character*.9)*255;
+     let target=mode===6&&s.palette===1?[38,41,33][k]+([224,224,207][k]-[38,41,33][k])*v:color(s.palette,v,k);
+     if(mode===1&&s.palette===0)target=clamp(.10+.77*v+(a[ti+k]/255-tl)*s.character*1.45*(.4+.6*v))*255;
      if(mode===7){target*=Math.pow(v,.65);old[i+k]=this.first?target:Math.max(target,old[i+k]*decay);}
      else old[i+k]=this.first?target:old[i+k]+(target-old[i+k])*amount;
     }

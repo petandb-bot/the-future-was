@@ -1,4 +1,4 @@
-# The Future Was Small — v0.1.4
+# The Future Was Small — v0.1.5
 
 古い映像機器の制約を創作的に再構築する、端末内完結の動画・写真加工アプリ。
 外部ライブラリ不要。WebGL 1 / GLSL ES 1.00、HTML、CSS、JavaScriptで実装。
@@ -6,7 +6,7 @@
 
 ## 現在の開発・公開ルール
 
-- 正式な開発元は `main` のルート。現行アプリは v0.1.4。過去の修正ブランチは公開対象にしない。
+- 正式な開発元は `main` のルート。現行アプリは v0.1.5。過去の修正ブランチは公開対象にしない。
 - 公開先: https://petandb-bot.github.io/the-future-was/
 - Pages: Settings → Pages → Deploy from a branch → main → / (root)。
 - 静的サイトのためビルド工程は不要。 `.nojekyll` で Jekyll 処理をスキップする。
@@ -30,7 +30,7 @@
 
 ## 操作
 
-Camera: カメラを開始。Flipで前後切替。Import: 写真・動画を読み込む。Demo: 内蔵の動く街並み。機器ボタンまたはプレビュー上の左右スワイプで機器選択。
+Camera: カメラを開始。Flipで前後切替。Import: 写真・動画を読み込む。Demo: 内蔵の動く街並み。撮影画面のDeviceセレクターで機器選択。Image controlsを開くと基本調整が利用可能。
 Exposure / Contrast / Character / Memoryを調整。Advancedでディザ等に関わるCharacter、信号劣化、画素テクスチャ、内部fps、解像度、色、出力サイズ、Seedなどを調整。
 SLOWSCANのみ走査周期とLiving scan / Transmissionが選択できます。初期は暗い画面から順番に更新されます。
 RandomizeはSeedと機器別パラメータを更新。Save/Load presetはJSONを入出力。入力映像やフレーム時刻が異なる場合、同じSeedでも完全に同一の映像にはなりません。
@@ -53,6 +53,13 @@ index.html: UI、style.css: レスポンシブデザイン、engine.js: WebGL・
 
 Node.jsの構文チェック、MesaソフトウェアOpenGL ESによる3種類のGLSLプログラムのコンパイル・リンク、Chromium上での模擬GPU・模擬MediaRecorderを用いた9機種の切替、エンコーダー開始失敗からの再試行、録画中のUIロック、録画終了、PNGプレビュー、画像読み込み、短いWebMの読み込みと全体変換の自動停止テストに合格。Chromiumでは実際のWebGLコンテキストが生成できなかったため、実際の映像描画、動画エンコード、カメラ、iPhone実機、PWAインストールの動作は未確認です。
 MOV/HEVC/HEICの読み込みは端末のデコーダー依存。H.264 MP4、JPEG/PNGを推奨。MP4エンコードが利用不可の場合はWebMを出力。SNSがWebMを受け付けない場合はMP4への変換が必要。連続撮影・長時間録画・発熱は実機検証後に調整してください。
+
+## v0.1.5 — Compact camera & distinct devices
+
+- Device選択を撮影画面の単一セレクターに統合。矢印・グリッド・非明示的なスワイプ選択を廃止。縦持ちではImage controlsを初期折り畳み、PCでは展開。
+- DMGは非対称な液晶応答、CGBは色軸、POCKETは輪郭・固定パターン、WRISTは柔らかな撮像、PAPERは紙色と局所更新、AMBERは秒単位の残光、DISTANTは送信スロット欠損。PXLの既存方向性は維持。SLOWSCANの周回境界を修正。
+- WebGLを優先し、互換2Dも近い方向に調整。完全な画質一致は保証しない。
+- JavaScript構文とUIの参照先を確認。実GPUのGLSL実行・iPhoneのレイアウト/録画は未検証。
 
 ## v0.1.4 — Development deployment
 
