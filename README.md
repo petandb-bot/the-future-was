@@ -89,3 +89,5 @@ MOV/HEVC/HEICの読み込みは端末のデコーダー依存。H.264 MP4、JPEG
 3. iPhone Safari（HTTPS）でカメラを起動し、前後切替と10秒録画。Share / Saveで保存先を選択。
 4. 短いH.264 MP4をImportし、Convert whole clipで先頭から終端まで録画。
 5. 必要に応じ音声あり、1080px、長時間録画を確認。MP4非対応の場合はWebM、または別のブラウザで試す。
+
+<!-- Refresh GitHub Pages deployment -->
