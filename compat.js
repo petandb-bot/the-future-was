@@ -34,7 +34,7 @@ class CompatEngine{
    const d=(bayer[(y%4)*4+x%4]/16-.5)*s.character*1.35;
    let v=l,levels=4,amount=1,pass=true,decay=0;
    if(mode===2){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4);v=l*(1-.35*s.character*((x/w-.5)**2+(y/h-.5)**2))+(2*l-left-right)*s.character*.93+(hash(x,y,0,seed)-.5)*s.signal*.30+n*s.signal*.05;}
-   if(mode===3){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4);v=.5*l+.25*(left+right)+n*s.signal*(.08+.24*(1-l));levels=32;if(hash(0,y,ticks,seed)>1-s.signal*.045)v*=.45;}
+   if(mode===3){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4);v=.5*l+.25*(left+right)+n*s.signal*(.08+.24*(1-l));levels=32;const epoch=Math.floor((ticks%96)/2);if(hash(0,y,epoch,seed)>1-s.signal*.018){const center=hash(17,y,epoch,seed),dist=Math.abs((x+.5)/w-center),t=clamp((dist-.035)/.145);v+=(v*-.16+n*.035)*(1-t*t*(3-2*t));}}
    if(mode===4){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4),up=lum(a,(Math.max(0,y-1)*w+x)*4),down=lum(a,(Math.min(h-1,y+1)*w+x)*4);const soft=.42*l+.145*(left+right+up+down);v=(l+(soft-l)*s.character)*(.94-.56*((x/w-.5)**2+(y/h-.5)**2)*s.character)+n*s.signal*.08;levels=16;}
    if(mode===5){const line=(y+.5)/h;pass=wrap?line>=prior||line<=this.phase:line>=prior&&line<=this.phase;v=s.scanMode>.5&&this.held&&!(wrap&&line<=this.phase)?lum(this.held,i):l;v+=n*s.signal*.15;levels=32;}
    if(mode===6){const slot=Math.floor(hash(x>>3,y>>3,0,seed)*8);pass=s.memory<.03||ticks%8===slot;amount=1-s.memory*.5;}
@@ -62,7 +62,7 @@ class CompatEngine{
   const c=this.canvas,ctx=this.out,scale=Math.min(c.width/this.w,c.height/this.h),w=c.width,h=c.height;
   ctx.fillStyle='#080908';ctx.fillRect(0,0,c.width,c.height);ctx.imageSmoothingEnabled=false;
   ctx.drawImage(this.surface,0,0,w,h);
-  if(s.texture>.01&&scale>=3){ctx.fillStyle='rgba(0,0,0,'+(s.texture*.15)+')';const top=(c.height-h)/2,left=(c.width-w)/2;for(let j=0;j<this.h;j++)ctx.fillRect(left,top+j*h/this.h,w,1);}
+  if(mode!==3&&s.texture>.01&&scale>=3){ctx.fillStyle='rgba(0,0,0,'+(s.texture*.15)+')';const top=(c.height-h)/2,left=(c.width-w)/2;for(let j=0;j<this.h;j++)ctx.fillRect(left,top+j*h/this.h,w,1);}
  }
 }
 window.SignalCompatEngine=CompatEngine;
