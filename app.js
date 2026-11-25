@@ -161,7 +161,7 @@ async function importFile(f){
 }
 function drawDemo(t){const w=640,h=480;const sky=ctx.createLinearGradient(0,0,0,h);sky.addColorStop(0,'#7c9dad');sky.addColorStop(.55,'#e9c8a5');sky.addColorStop(1,'#4a5158');ctx.fillStyle=sky;ctx.fillRect(0,0,w,h);ctx.fillStyle='#e8dfac';ctx.beginPath();ctx.arc(420+Math.sin(t*.12)*30,101,38,0,7);ctx.fill();for(let i=0;i<14;i++){let x=i*53-(t*9%53),bh=100+(i*137%165);ctx.fillStyle=['#536b72','#84786d','#5b5967','#a19478'][i%4];ctx.fillRect(x,h-100-bh,46,bh);for(let y=h-100-bh+13;y<h-115;y+=18)for(let k=0;k<3;k++){ctx.fillStyle=(i+k+Math.floor(y/18))%5===0?'#eac17e':'#33414a';ctx.fillRect(x+5+k*13,y,7,10);}}ctx.fillStyle='#363f41';ctx.fillRect(0,380,w,100);ctx.fillStyle='#c7bda2';for(let i=0;i<9;i++)ctx.fillRect(i*84-(t*45%84),430,46,3);for(let i=0;i<3;i++){let x=(t*(42+i*14)+i*239)%740-80;ctx.fillStyle=['#b5624d','#e1c877','#74958f'][i];ctx.fillRect(x,397+i*11,62,17);ctx.fillRect(x+13,387+i*11,31,12);ctx.fillStyle='#252e32';ctx.fillRect(x+9,411+i*11,11,7);ctx.fillRect(x+43,411+i*11,11,7);}}
 function loop(ms){
- requestAnimationFrame(loop);if(document.hidden||photoPending||rec?.saveTimeout||$('result').open)return;if(gpuState==='restore-pending')restoreGPU();if(gpuState==='fallback-pending')startFallback();if(!gpuReady()){if(gpuState==='ready'&&engine?.isLost()){if(engine.kind==='2d')gpuFailure('Canvas context lost.');else beginLoss('WebGL context lost.');}return;}
+ requestAnimationFrame(loop);if(document.hidden||photoPending||rec?.saveTimeout||$('result').hasAttribute('open'))return;if(gpuState==='restore-pending')restoreGPU();if(gpuState==='fallback-pending')startFallback();if(!gpuReady()){if(gpuState==='ready'&&engine?.isLost()){if(engine.kind==='2d')gpuFailure('Canvas context lost.');else beginLoss('WebGL context lost.');}return;}
  
  const t=ms/1000,rate=effectiveRate();try{
   if(lastStep<0||t-lastStep>=1/rate-.003){
@@ -195,7 +195,7 @@ function result(blob,name){
  $('share').classList.add('has-take');$('captureStatus').textContent=blob.type.startsWith('video/')?'Recording ready':'Photo ready';locks();
 }
 function openTake(){
- if(!lastResult||rec||busy||photoPending||$('result').open)return;
+ if(!lastResult||rec||busy||photoPending||$('result').hasAttribute('open'))return;
  const dialog=$('result'),v=$('resultVideo'),image=$('resultImage'),{blob,name}=lastResult;
  clearTakeMedia();const isVideo=blob.type.startsWith('video/');
  v.hidden=!isVideo;image.hidden=isVideo;if(isVideo)v.src=lastURL;else image.src=lastURL;
@@ -205,21 +205,22 @@ function openTake(){
  document.body.classList.add('take-open');
  if(typeof dialog.showModal==='function'){try{dialog.showModal();}catch{dialog.classList.add('fallback-dialog');dialog.setAttribute('open','');}}
  else{dialog.classList.add('fallback-dialog');dialog.setAttribute('open','');}
+ if(dialog.classList.contains('fallback-dialog'))for(const el of document.querySelectorAll('header,main,.capture-dock'))el.inert=true;
  $('closeResult').focus();
 }
 function afterTakeClose(){
- if($('result').open)return;
- clearTakeMedia();document.body.classList.remove('take-open');$('result').classList.remove('fallback-dialog');
+ if($('result').hasAttribute('open'))return;
+ clearTakeMedia();document.body.classList.remove('take-open');$('result').classList.remove('fallback-dialog');for(const el of document.querySelectorAll('header,main,.capture-dock'))el.inert=false;
  lastStep=-1;sourceUploaded=false;if(engine)engine.lastTime=null;dirty=true;
  if(!$('share').disabled)$('share').focus({preventScroll:true});
 }
 function closeTake(){
- const dialog=$('result');if(!dialog.open)return;
+ const dialog=$('result');if(!dialog.hasAttribute('open'))return;
  if(typeof dialog.close==='function'&&!dialog.classList.contains('fallback-dialog'))dialog.close();else dialog.removeAttribute('open');
  afterTakeClose();
 }
 function photo(){
- if(!gpuReady()||engine.first||busy||rec||photoPending||$('result').open)return;
+ if(!gpuReady()||engine.first||busy||rec||photoPending||$('result').hasAttribute('open'))return;
  photoPending=true;locks();let done=false;
  const finishPhoto=b=>{if(done)return;done=true;clearTimeout(timer);photoPending=false;locks();if(b){result(b,'signal-'+stamp()+'.png');status('');}else status('PNG export failed.');};
  const timer=setTimeout(()=>finishPhoto(null),8000);
@@ -251,7 +252,7 @@ function finish(r,chunks){
  else status('Recording failed or empty. Try 480 px or another format.');
 }
 async function record(){
- if(rec||busy||photoPending||!gpuReady()||engine.first||document.hidden||$('result').open)return;
+ if(rec||busy||photoPending||!gpuReady()||engine.first||document.hidden||$('result').hasAttribute('open'))return;
  const startEpoch=gpuEpoch;const checkGPU=()=>{if(startEpoch!==gpuEpoch||!gpuReady()||document.hidden)throw Error('GPU or foreground changed; retry recording.');};
  busy=true;locks();recFailed=false;stopReason='';recordWhole=source==='video'&&$('whole').checked;
  try{
@@ -286,7 +287,7 @@ function stop(reason=''){
  r.saveTimeout=setTimeout(()=>{if(rec!==r)return;recFailed=true;finish(r,r.savedChunks||[]);status('Encoder finalization timed out. Check partial take, or try 480 px.');},12000);
  try{if(r.state!=='inactive')r.stop();}catch(e){recFailed=true;finish(r,r.savedChunks||[]);status('Recorder: '+e.message);}
 }
-$('camera').onclick=camera;$('flip').onclick=()=>{facing=facing==='user'?'environment':'user';camera();};$('import').onclick=()=>$('file').click();$('file').onchange=e=>{importFile(e.target.files[0]);e.target.value='';};$('play').onclick=()=>video.paused?video.play().catch(e=>status(e.message)):video.pause();video.addEventListener('play',updateSourceUI);video.addEventListener('pause',updateSourceUI);$('seek').oninput=e=>{video.currentTime=Number(e.target.value);resetMemory();};video.addEventListener('resize',()=>{if(!rec&&(source==='camera'||source==='video')){updateSize();resetMemory();}});video.addEventListener('ended',()=>{if(rec&&recordWhole)stop('Whole clip finished');});video.addEventListener('error',()=>{if(source==='video'&&rec)stop('Source decoding interrupted');});video.addEventListener('seeked',()=>{if(source==='video'&&!rec&&!busy)resetMemory();});$('photo').onclick=photo;$('record').onclick=()=>rec?stop():record();$('share').onclick=openTake;$('nativeShare').onclick=share;$('closeResult').onclick=closeTake;$('result').addEventListener('close',afterTakeClose);$('result').addEventListener('click',e=>{if(e.target!==$('result'))return;const b=$('result').getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)closeTake();});$('resultVideo').addEventListener('error',()=>{if($('result').open&&lastResult?.blob.type.startsWith('video/'))$('takeStatus').textContent='Preview unavailable. Check the downloaded file.';});
+$('camera').onclick=camera;$('flip').onclick=()=>{facing=facing==='user'?'environment':'user';camera();};$('import').onclick=()=>$('file').click();$('file').onchange=e=>{importFile(e.target.files[0]);e.target.value='';};$('play').onclick=()=>video.paused?video.play().catch(e=>status(e.message)):video.pause();video.addEventListener('play',updateSourceUI);video.addEventListener('pause',updateSourceUI);$('seek').oninput=e=>{video.currentTime=Number(e.target.value);resetMemory();};video.addEventListener('resize',()=>{if(!rec&&(source==='camera'||source==='video')){updateSize();resetMemory();}});video.addEventListener('ended',()=>{if(rec&&recordWhole)stop('Whole clip finished');});video.addEventListener('error',()=>{if(source==='video'&&rec)stop('Source decoding interrupted');});video.addEventListener('seeked',()=>{if(source==='video'&&!rec&&!busy)resetMemory();});$('photo').onclick=photo;$('record').onclick=()=>rec?stop():record();$('share').onclick=openTake;$('nativeShare').onclick=share;$('closeResult').onclick=closeTake;$('result').addEventListener('close',afterTakeClose);$('result').addEventListener('keydown',e=>{if(e.key==='Escape'&&$('result').classList.contains('fallback-dialog')){e.preventDefault();closeTake();}});$('result').addEventListener('click',e=>{if(e.target!==$('result'))return;const b=$('result').getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)closeTake();});$('resultVideo').addEventListener('error',()=>{if($('result').hasAttribute('open')&&lastResult?.blob.type.startsWith('video/'))$('takeStatus').textContent='Preview unavailable. Check the downloaded file.';});
 function beginLoss(message){
  if(gpuState==='lost'||gpuState==='fallback-pending'||engine?.kind==='2d')return;
  gpuEpoch++;gpuState='lost';
