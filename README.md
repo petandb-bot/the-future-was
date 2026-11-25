@@ -4,10 +4,27 @@
 外部ライブラリ不要。WebGL 1 / GLSL ES 1.00、HTML、CSS、JavaScriptで実装。
 実機の電子回路・液晶・記録媒体を厳密に再現するエミュレーターではありません。
 
+## 現在の開発・公開ルール
+
+- 正式な開発元は `main` のルート。現行アプリは v0.1.4。過去の修正ブランチは公開対象にしない。
+- 公開先: https://petandb-bot.github.io/the-future-was/
+- Pages: Settings → Pages → Deploy from a branch → main → / (root)。
+- 静的サイトのためビルド工程は不要。 `.nojekyll` で Jekyll 処理をスキップする。
+- `version.json` は公開されたファイルのバージョン確認用。画面表示と一致させる。
+- 開発中はオフラインキャッシュを無効化。録画データを保存してから再読み込みする。
+- v0.2 の未マージ変更は安定化完了まで保留し、今後の統合用に保持する。
+
+### 公開ページが旧バージョンの場合
+
+1. Actions の pages build and deployment を確認。最新の main を対象とする実行が成功しているか確認する。
+2. 実行が古いコミットのまま Queued なら、Pages の公開元を確認し、必要に応じて古い実行をキャンセルして、管理者のブラウザから main に変更をコミットする。
+3. 公開後、シークレット/プライベートウィンドウで URL を開いて左上のバージョンを確認する。通常ブラウザのみ古い場合は、このサイトの Service Worker と Cache Storage を削除する。
+4. 既存の公開 URL を維持する。別ブランチや別リポジトリからは公開しない。
+
 ## 起動
 
-- 単体HTML版: デスクトップのChrome/Edge/Safariで開く。まずDemoで動作確認。ファイル直接起動時はカメラ・保存機能にブラウザ制限がある場合があります。
-- PWA版: ZIPを展開し、そのフォルダで `python3 -m http.server 8000`（Windowsでは `py -m http.server 8000`）を実行し、PCのブラウザで http://localhost:8000/ を開く。Pythonが必要です。
+- ローカル確認: main の Code → Download ZIP で取得したソースを展開し、下記のローカルHTTPサーバーで起動する。分割ファイル構成のため index.html 単体を配布しない。
+- ローカルHTTP: ZIPを展開し、そのフォルダで `python3 -m http.server 8000`（Windowsでは `py -m http.server 8000`）を実行し、PCのブラウザで http://localhost:8000/ を開く。Pythonが必要です。
 - iPhone: ZIP内の全ファイルをGitHub PagesなどHTTPSの静的ホスティングに配置し、SafariでURLを開く。共有メニュー → ホーム画面に追加。PCのローカルHTTP IPアドレスではカメラが許可されないことがあります。App Storeアプリではありません。
 - GitHub Pages: リポジトリのルートにフォルダ内のファイルを配置し、Settings → Pages → Deploy from a branch → main / (root)。公開URLをSafariで開く。
 
@@ -30,7 +47,7 @@ DMG-89 / CGB-98 / POCKET-98 / PXL-87 / WRIST-00 / SLOWSCAN / PAPER MEMORY / AMBE
 
 ## ファイル
 
-index.html: UI、style.css: レスポンシブデザイン、engine.js: WebGL・シェーダー・機器定義、app.js: カメラ・入力・録画・プリセット・状態管理、manifest.webmanifest / sw.js / icon-*.png: PWA。
+index.html: UI、style.css: レスポンシブデザイン、engine.js: WebGL・シェーダー・機器定義、compat.js: Canvas 2D互換エンジン、app.js: カメラ・入力・録画・プリセット・状態管理、manifest.webmanifest / sw.js / icon-*.png: PWA、version.json: 公開バージョン確認、.nojekyll: 静的配信設定。
 
 ## 検証状況・制約
 
