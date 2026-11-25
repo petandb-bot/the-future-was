@@ -80,7 +80,7 @@ function restoreGPU(){
  }catch(e){gpuFailure('WebGL recovery failed: '+e.message);}
 }
 function resetMemory(){engine?.reset();lastStep=-1;lastInputTime=-1;sourceUploaded=false;dirty=true;}
-function sync(){const m=modes[mode];$('device').value=String(mode);$('deviceSubtitle').textContent=m.sub;$('description').textContent=m.desc;$('series').textContent=m.fiction?'UNRELEASED':'ARCHIVE';for(const [k] of params){$('p-'+k).value=s[k];$('v-'+k).textContent=Number(s[k]).toFixed(k==='rate'?0:2);}$('row-scanSeconds').hidden=mode!==5;$('scanMode').parentElement.hidden=mode!==5;for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).value=s[k];updateSize();}
+function sync(){const m=modes[mode];$('device').value=String(mode);$('deviceSubtitle').textContent=m.sub;$('description').textContent=m.desc;$('series').textContent=mode>=9?'EXPERIMENTAL':m.fiction?'UNRELEASED':'ARCHIVE';for(const [k] of params){$('p-'+k).value=s[k];$('v-'+k).textContent=Number(s[k]).toFixed(k==='rate'?0:2);}$('row-scanSeconds').hidden=mode!==5;$('scanMode').parentElement.hidden=mode!==5;for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).value=s[k];updateSize();}
 function choose(i){if(rec||busy||!Number.isInteger(i))return;const common={aspect:s.aspect,size:s.size,audio:s.audio,seed:s.seed};mode=(i+modes.length)%modes.length;s={...defaults(mode),...common};resetMemory();sync();}
 function locks(){
  const lock=!!rec||busy, ready=gpuReady();

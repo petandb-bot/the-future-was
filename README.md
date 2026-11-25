@@ -1,10 +1,21 @@
-# The Future Was Small — v0.1.5
+# The Future Was Small — Experimental v0.2.0-exp.1
 
 古い映像機器の制約を創作的に再構築する、端末内完結の動画・写真加工アプリ。
 外部ライブラリ不要。WebGL 1 / GLSL ES 1.00、HTML、CSS、JavaScriptで実装。
 実機の電子回路・液晶・記録媒体を厳密に再現するエミュレーターではありません。
 
-## 現在の開発・公開ルール
+## Experimental branch
+
+This branch is independent of the published stable v0.1.5. It retains all nine original modes and adds two image-derived, fictional imaging models:
+
+- EVENT SENSOR: positive and negative changes of log luminance, with sensitivity (Character) and decay (Memory). Static scenes intentionally fade to black; this is not a physical event camera.
+- CHROMA SEQUENTIAL: sample-and-hold RGB channels at independent times. Memory sets the dwell length, Character controls colour separation and saturation. Use a moving subject or pan the camera; static scenes converge to an ordinary colour image.
+
+WebGL uses the original three low-resolution FBOs; an experimental shader is compiled only when selected. The original nine-device process shader is unchanged. The Canvas 2D fallback approximates the two new devices. The stable branch, archive and Pages source are not changed.
+
+Test this branch locally using a static HTTP server. Do not switch the existing Pages source to this branch. Browser/GPU and iPhone validation are pending.
+
+## 現在の開発・公開ルール（安定版の記録）
 
 - 正式な開発元は `main` のルート。現行アプリは v0.1.5。過去の修正ブランチは公開対象にしない。
 - 公開先: https://petandb-bot.github.io/the-future-was/

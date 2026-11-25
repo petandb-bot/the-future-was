@@ -1,6 +1,6 @@
 {
-  "version": "0.1.5",
-  "channel": "development",
+  "version": "0.2.0-exp.1",
+  "channel": "experimental",
   "renderer": "WebGL with Canvas 2D fallback",
   "offlineCache": false
 }

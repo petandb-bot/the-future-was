@@ -33,6 +33,28 @@ class CompatEngine{
   const ticks=this.tick,seed=s.seed|0,grade=l=>clamp((l*2**s.exposure-.5)*s.contrast+.5);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
    const i=(y*w+x)*4,l=lum(a,i),n=hash(x,y,ticks%1000,seed)-.5;
+   // 追加2機種は既存の9機種の処理を通さない。
+   if(mode===9){
+    const previous=this.held?lum(this.held,i):l,gain=2**s.exposure,delta=this.first?0:Math.log(.05+gain*l)-Math.log(.05+gain*previous);
+    const threshold=.22-.185*s.character,v=clamp((Math.abs(delta)-threshold)*s.contrast*2.5)*(hash(x,y,ticks,seed)>=s.signal*.5?1:0);
+    const on=[[122,240,212],[240,240,240],[166,224,255],[255,209,102]],off=[[250,107,51],[107,107,107],[61,110,186],[173,66,23]];
+    const tint=(delta>=0?on:off)[s.palette]||on[0],decay=Math.exp(-dt/(.025+s.memory*1.9));
+    for(let k=0;k<3;k++)old[i+k]=Math.max(v*tint[k],this.first?0:old[i+k]*decay);
+    old[i+3]=255;continue;
+   }
+   if(mode===10){
+    const graded=grade(l),dwell=1+Math.floor(s.memory*4),slot=Math.floor(ticks/dwell)%3;
+    const keep=hash(x>>3,y>>3,Math.floor(ticks/dwell),seed)>=s.signal*.5;
+    const t=clamp(s.memory/.15),strength=t*t*(3-2*t);
+    for(let k=0;k<3;k++){
+     let target=clamp(graded+(grade(a[i+k]/255)-graded)*(.45+s.character*1.35));
+     if(s.palette!==0)target=color(s.palette,graded,k)/255;
+     target=Math.round(target*15)/15*255;
+     const mix=this.first?1:1-strength+strength*(keep&&k===slot?1:0);
+     old[i+k]+=(target-old[i+k])*mix;
+    }
+    old[i+3]=255;continue;
+   }
    const d=(bayer[(y%4)*4+x%4]/16-.5)*s.character*1.35;
    let v=l,levels=4,amount=1,pass=true,decay=0;
    if(mode===2){const left=lum(a,(y*w+Math.max(0,x-1))*4),right=lum(a,(y*w+Math.min(w-1,x+1))*4);v=l*(1-.35*s.character*((x/w-.5)**2+(y/h-.5)**2))+(2*l-left-right)*s.character*.93+(hash(x,y,0,seed)-.5)*s.signal*.30+n*s.signal*.05;}
@@ -56,7 +78,7 @@ class CompatEngine{
    }
    old[i+3]=255;
   }
-  if(mode===5&&wrap)this.held=new Uint8ClampedArray(a);
+  if(mode===9){if(!this.held||this.held.length!==a.length)this.held=new Uint8ClampedArray(a);else this.held.set(a);}else if(mode===5&&wrap)this.held=new Uint8ClampedArray(a);
   this.surfaceCtx.putImageData(this.frame,0,0);this.first=false;this.tick++;
  }
  present(mode,s){

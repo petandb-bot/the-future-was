@@ -10,7 +10,9 @@ const modes = [
  {id:'SLOWSCAN',sub:'Narrowband transmission',desc:'走査線ごとに時間を記録。Living scan と Transmission を切替。',w:120,h:120,fps:30,char:.72,mem:.16,signal:.22,texture:.15,pal:1},
  {id:'PAPER MEMORY',sub:'Unreleased / bistable display',desc:'紙色の4階調。領域ごとの順番で記憶を書き換える。',w:180,h:135,fps:12,char:.8,mem:.72,signal:.08,texture:.12,pal:1,fiction:true},
  {id:'AMBER MEMORY',sub:'Unreleased / phosphor archive',desc:'琥珀色の光が蓄積し、移動する被写体の軌跡が残る。',w:192,h:144,fps:24,char:.65,mem:.82,signal:.1,texture:.25,pal:3,fiction:true},
- {id:'DISTANT SIGNAL',sub:'Unreleased / packet receiver',desc:'低帯域通信。固定送信スロットと欠損で過去の断片が残る。',w:160,h:120,fps:18,char:.72,mem:.68,signal:.35,texture:.12,pal:2,fiction:true}
+ {id:'DISTANT SIGNAL',sub:'Unreleased / packet receiver',desc:'低帯域通信。固定送信スロットと欠損で過去の断片が残る。',w:160,h:120,fps:18,char:.72,mem:.68,signal:.35,texture:.12,pal:2,fiction:true},
+ {id:'EVENT SENSOR',sub:'Experimental / change-only imaging',desc:'明るさの変化だけを記録。Characterで検出感度、Memoryで痕跡の寿命を調整。静止した風景は暗くなる。',w:160,h:120,fps:20,char:.75,mem:.48,signal:.04,texture:.08,pal:0,fiction:true},
+ {id:'CHROMA SEQUENTIAL',sub:'Experimental / asynchronous RGB',desc:'色ごとに異なる時刻を記録。Memoryで色取得間隔、Characterで色の強さを調整。',w:160,h:120,fps:18,char:.65,mem:.38,signal:.04,texture:.10,pal:0,fiction:true}
 ];
 const vertex=`attribute vec2 a; varying mediump vec2 uv; void main(){uv=a*.5+.5;gl_Position=vec4(a,0.,1.);}`;
 const process=`#ifdef GL_FRAGMENT_PRECISION_HIGH
@@ -39,6 +41,42 @@ void main(){vec2 p=floor(uv*res);vec2 q=(p+.5)/res;vec3 old=first>.5?vec3(0.):te
  else if(mode<7.5){outc=mono(quant(l,32.,d*.2))*pow(l,.6);outc=first>.5?outc:max(outc,old*exp(-dt/vec3(.03+memory*2.4,.03+memory*1.5,.03+memory*.65)));}
  else {vec2 block=floor(p/vec2(16.,12.));float slots=2.+floor(memory*12.);float slot=floor(hash(block+vec2(mod(seed,113.),19.))*slots);float epoch=floor(tick/slots);float turn=1.-step(.5,abs(mod(tick,slots)-slot));float available=step(signal*.82,hash(block+vec2(mod(epoch,97.),mod(seed,83.))));float v=quant(l,8.,d*.3);outc=mono(v);outc=first>.5?outc:mix(old,outc,mix(1.,turn*available,smoothstep(0.,.3,max(memory,signal))));}
  gl_FragColor=vec4(clamp(outc,0.,1.),1.);}`;
+// 新規機種は既存のシェーダーと分離し、選択時のみコンパイル。
+// EVENT: 第3 FBO を直前の未加工画像として再利用。
+// CHROMA: 既存の履歴 RGB 各成分を独立したサンプル＆ホールドにする。
+const experimental=process.slice(0,process.indexOf('void main()'))+`
+void main(){
+ vec2 p=floor(uv*res),q=(p+.5)/res;
+ vec3 c=sampleSrc(q),old=first>.5?vec3(0.):texture2D(history,q).rgb;
+ vec3 outc;
+ if(mode<9.5){
+  // 対数輝度差による正負のイベント。物理的なイベントカメラではなく映像からの近似。
+  vec3 prev=texture2D(held,q).rgb;
+  float gain=exp2(exposure),a=log(.05+gain*lum(c)),b=log(.05+gain*lum(prev));
+  float delta=first>.5?0.:a-b;
+  float threshold=mix(.22,.035,character);
+  float v=clamp((abs(delta)-threshold)*contrast*2.5,0.,1.);
+  float keep=step(signal*.5,hash(p+vec2(mod(tick,97.),mod(seed,113.))));
+  vec3 pos=vec3(.48,.94,.83),neg=vec3(.98,.42,.20);
+  if(palette>.5&&palette<1.5){pos=vec3(.94);neg=vec3(.42);}
+  if(palette>1.5&&palette<2.5){pos=vec3(.65,.88,1.);neg=vec3(.24,.43,.73);}
+  if(palette>2.5){pos=vec3(1.,.82,.40);neg=vec3(.68,.26,.09);}
+  vec3 eventColor=(delta>=0.?pos:neg)*v*keep;
+  outc=max(eventColor,old*exp(-dt/(.025+memory*1.9)));
+ }else{
+  // 同じ時刻のRGBをずらすのでなく、別々の時刻にサンプリングした値を保持。
+  vec3 rgb=vec3(grade(c.r),grade(c.g),grade(c.b));
+  float l=grade(lum(c));rgb=clamp(vec3(l)+(rgb-l)*(.45+character*1.35),0.,1.);
+  if(palette>.5)rgb=mono(l);
+  float levels=16.;rgb=floor(rgb*(levels-1.)+.5)/(levels-1.);
+  float dwell=1.+floor(memory*4.);
+  float slot=mod(floor(tick/dwell),3.);
+  vec3 mask=vec3(1.-step(.5,abs(slot)),1.-step(.5,abs(slot-1.)),1.-step(.5,abs(slot-2.)));
+  float keep=step(signal*.5,hash(floor(p/8.)+vec2(mod(floor(tick/dwell),97.),mod(seed,113.))));
+  outc=first>.5?rgb:mix(old,rgb,mix(vec3(1.),mask*keep,smoothstep(0.,.15,memory)));
+ }
+ gl_FragColor=vec4(clamp(outc,0.,1.),1.);
+}`;
 const copy=`precision mediump float;varying mediump vec2 uv;uniform sampler2D src;uniform vec2 srcSize;uniform float ratio,mirror;void main(){float r=srcSize.x/srcSize.y;vec2 s=vec2(min(1.,ratio/r),min(1.,r/ratio));vec2 q=(uv-.5)*s+.5;if(mirror>.5)q.x=1.-q.x;gl_FragColor=texture2D(src,q);}`;
 const display=`precision mediump float; varying mediump vec2 uv;uniform sampler2D src;uniform vec2 res;uniform float textureAmount,mode,ratio,nativeRatio;void main(){vec2 scale=vec2(min(1.,nativeRatio/ratio),min(1.,ratio/nativeRatio));vec2 q=(uv-.5)/scale+.5;if(q.x<0.||q.x>1.||q.y<0.||q.y>1.){gl_FragColor=vec4(.025,.027,.025,1.);return;}vec3 c=texture2D(src,q).rgb;vec2 f=fract(q*res);float mask=1.;if(mode<2.5){mask=1.-textureAmount*.32*max(step(f.x,.12),step(f.y,.12));}else if(mode>6.5&&mode<7.5){mask=1.-textureAmount*.23*step(f.y,.23);}else{mask=1.-textureAmount*.12*step(f.y,.18);}gl_FragColor=vec4(c*mask,1.);}`;
 class Engine {
@@ -52,7 +90,7 @@ class Engine {
  reset(){this.first=true;this.index=0;this.tick=0;this.phase=0;this.lastTime=null;}
  upload(source,w,h){const g=this.gl;if(!w||!h||g.isContextLost())return false;g.activeTexture(g.TEXTURE0);g.bindTexture(g.TEXTURE_2D,this.src);g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL,true);if(w===this.sw&&h===this.sh&&this.uploaded)g.texSubImage2D(g.TEXTURE_2D,0,0,0,g.RGBA,g.UNSIGNED_BYTE,source);else{g.texImage2D(g.TEXTURE_2D,0,g.RGBA,g.RGBA,g.UNSIGNED_BYTE,source);this.sw=w;this.sh=h;this.uploaded=true;}return true;}
  draw(name,target,w,h,uniforms,textures){const g=this.gl,p=this.programs[name];g.bindFramebuffer(g.FRAMEBUFFER,target?target.f:null);g.viewport(0,0,w,h);g.useProgram(p.p);g.bindBuffer(g.ARRAY_BUFFER,this.buf);g.enableVertexAttribArray(p.a);g.vertexAttribPointer(p.a,2,g.FLOAT,false,0,0);const loc=k=>{if(!p.u.has(k))p.u.set(k,g.getUniformLocation(p.p,k));return p.u.get(k);};Object.entries(textures).forEach(([k,t],i)=>{g.activeTexture(g.TEXTURE0+i);g.bindTexture(g.TEXTURE_2D,t);g.uniform1i(loc(k),i);});for(const [k,v] of Object.entries(uniforms)){if(Array.isArray(v))g.uniform2f(loc(k),v[0],v[1]);else g.uniform1f(loc(k),v);}g.drawArrays(g.TRIANGLE_STRIP,0,4);g.activeTexture(g.TEXTURE0);}
- step(now,mode,s,mirror){if(this.gl.isContextLost()||!this.w||this.targets.length!==3)return;const w=this.w,h=this.h,ratio=w/h,dt=this.lastTime===null?0:Math.min(.25,Math.max(0,now-this.lastTime));this.lastTime=now;let prior=this.phase;this.phase=(this.phase+dt/s.scanSeconds)%1;if(mode===5&&this.first)this.draw('copy',this.targets[2],w,h,{srcSize:[this.sw,this.sh],ratio,mirror},{src:this.src});const next=1-this.index;this.draw('process',this.targets[next],w,h,{res:[w,h],srcSize:[this.sw,this.sh],mode,exposure:s.exposure,contrast:s.contrast,character:s.character,memory:this.first?0:s.memory,dt:this.first?1/s.rate:Math.max(.001,dt),signal:s.signal,seed:s.seed%4093,tick:this.tick%1000,phase:this.phase,priorPhase:prior,scanMode:s.scanMode,first:this.first?1:0,mirror,ratio,palette:s.palette},{src:this.src,history:this.targets[this.index].t,held:this.targets[2].t});if(mode===5&&this.phase<prior)this.draw('copy',this.targets[2],w,h,{srcSize:[this.sw,this.sh],ratio,mirror},{src:this.src});this.first=false;this.index=next;this.tick++;}
+ step(now,mode,s,mirror){if(this.gl.isContextLost()||!this.w||this.targets.length!==3)return;const w=this.w,h=this.h,ratio=w/h,dt=this.lastTime===null?0:Math.min(.25,Math.max(0,now-this.lastTime));this.lastTime=now;let prior=this.phase;this.phase=(this.phase+dt/s.scanSeconds)%1;if(mode===5&&this.first)this.draw('copy',this.targets[2],w,h,{srcSize:[this.sw,this.sh],ratio,mirror},{src:this.src});const next=1-this.index;const pass=mode>=9?'experimental':'process';if(mode>=9&&!this.programs.experimental)this.programs.experimental=this.program(experimental,'experimental');this.draw(pass,this.targets[next],w,h,{res:[w,h],srcSize:[this.sw,this.sh],mode,exposure:s.exposure,contrast:s.contrast,character:s.character,memory:this.first?0:s.memory,dt:this.first?1/s.rate:Math.max(.001,dt),signal:s.signal,seed:s.seed%4093,tick:this.tick%1000,phase:this.phase,priorPhase:prior,scanMode:s.scanMode,first:this.first?1:0,mirror,ratio,palette:s.palette},{src:this.src,history:this.targets[this.index].t,held:this.targets[2].t});if(mode===9||(mode===5&&this.phase<prior))this.draw('copy',this.targets[2],w,h,{srcSize:[this.sw,this.sh],ratio,mirror},{src:this.src});this.first=false;this.index=next;this.tick++;}
  present(mode,s){if(this.gl.isContextLost()||!this.w||this.first)return;this.draw('display',null,this.canvas.width,this.canvas.height,{res:[this.w,this.h],textureAmount:s.texture,mode,ratio:this.canvas.width/this.canvas.height,nativeRatio:this.w/this.h},{src:this.targets[this.index].t});}
 }
 window.SignalEngine=Engine;window.SignalModes=modes;
