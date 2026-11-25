@@ -1,7 +1,8 @@
-const CACHE='future-small-v013';
-const ASSETS=['./','./index.html','./style.css','./engine.js','./compat.js','./app.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
-self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS))));
-self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('future-small-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
-// 同じバージョンの HTML / JS をまとめて配信し、更新途中の混在を防ぐ。
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||new URL(e.request.url).origin!==self.location.origin)return;
- e.respondWith(caches.open(CACHE).then(async c=>{if(e.request.mode==='navigate')return (await c.match('./index.html'))||fetch(e.request);return (await c.match(e.request))||fetch(e.request);}));});
+// Development build: no fetch handler. All requests use the network normally.
+// Replace old cache-first workers, including v0.1.1 to v0.1.3.
+self.addEventListener('install',event=>event.waitUntil(self.skipWaiting()));
+self.addEventListener('activate',event=>event.waitUntil((async()=>{
+ const keys=await caches.keys();
+ await Promise.all(keys.filter(k=>/^future-small-v[0-9]+$/.test(k)).map(k=>caches.delete(k)));
+ await self.clients.claim();
+})()));

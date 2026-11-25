@@ -265,5 +265,14 @@ try{engine=new window.SignalEngine(canvas);gpuState='ready';$('gpu').textContent
 catch(e){gpuFailure(e.message);}
 if(gpuState==='fallback-pending')startFallback();
 requestAnimationFrame(loop);
-if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+// 開発中はオフラインキャッシュを使わず、旧workerを更新する。
+// 自動リロードで録画や未保存のデータを失わないよう、更新通知のみ表示。
+if('serviceWorker'in navigator&&location.protocol.startsWith('http')){
+ let hadController=!!navigator.serviceWorker.controller;
+ navigator.serviceWorker.addEventListener('controllerchange',()=>{
+  if(hadController){$('updateNotice').hidden=false;}
+  hadController=true;
+ });
+ navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(e=>console.warn('Service worker update:',e));
+}
 })();

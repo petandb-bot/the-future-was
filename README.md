@@ -1,4 +1,4 @@
-# The Future Was Small — v0.1.3
+# The Future Was Small — v0.1.4
 
 古い映像機器の制約を創作的に再構築する、端末内完結の動画・写真加工アプリ。
 外部ライブラリ不要。WebGL 1 / GLSL ES 1.00、HTML、CSS、JavaScriptで実装。
@@ -36,6 +36,12 @@ index.html: UI、style.css: レスポンシブデザイン、engine.js: WebGL・
 
 Node.jsの構文チェック、MesaソフトウェアOpenGL ESによる3種類のGLSLプログラムのコンパイル・リンク、Chromium上での模擬GPU・模擬MediaRecorderを用いた9機種の切替、エンコーダー開始失敗からの再試行、録画中のUIロック、録画終了、PNGプレビュー、画像読み込み、短いWebMの読み込みと全体変換の自動停止テストに合格。Chromiumでは実際のWebGLコンテキストが生成できなかったため、実際の映像描画、動画エンコード、カメラ、iPhone実機、PWAインストールの動作は未確認です。
 MOV/HEVC/HEICの読み込みは端末のデコーダー依存。H.264 MP4、JPEG/PNGを推奨。MP4エンコードが利用不可の場合はWebMを出力。SNSがWebMを受け付けない場合はMP4への変換が必要。連続撮影・長時間録画・発熱は実機検証後に調整してください。
+
+## v0.1.4 — Development deployment
+
+- Development builds no longer use offline caching. The service worker activates immediately, removes only this project's previous version caches and does not intercept requests.
+- Versioned script/style URLs prevent old assets from being reused by the HTTP cache. Reload after the worker update; no automatic reload during recording.
+- If the old version is still shown, verify GitHub Pages deployment and open in a fresh/private tab. Home-screen launch is supported, but offline use is intentionally disabled during development.
 
 ## v0.1.3 — Rendering compatibility
 
