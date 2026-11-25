@@ -1,5 +1,3 @@
-/* 低解像度の Canvas 2D 互換エンジン。WebGL が利用不能な場合のみ使用。
- * GPU版の厳密な再現ではない。毎フレームの読み出しは最大192px長辺。 */
 (()=>{
 'use strict';
 const clamp=(x,a=0,b=1)=>Math.max(a,Math.min(b,x));
@@ -22,7 +20,7 @@ class CompatEngine{
  upload(source,w,h){if(!w||!h)return false;this.source=source;this.sw=w;this.sh=h;return true;}
  step(now,mode,s,mirror){
   const w=this.w,h=this.h;if(!w||!h||!this.source)return;
-  const dt=this.lastTime===null?1/12:clamp(now-this.lastTime,0,.25);this.lastTime=now;
+  const dt=this.lastTime===null?1/12:clamp(now-this.lastTime,0,.5);this.lastTime=now;
   const prior=this.phase;this.phase=(prior+dt/Math.max(1,s.scanSeconds))%1;
   const wrap=this.phase<prior,ratio=w/h,srcRatio=this.sw/this.sh;
   const cw=srcRatio>ratio?this.sh*ratio:this.sw,ch=srcRatio>ratio?this.sh:this.sw/ratio;
