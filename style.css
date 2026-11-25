@@ -25,3 +25,5 @@
  .device-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
  .device-nav button{min-height:44px}
 }
+
+#diagnostics{margin:4px 0 10px;padding-top:4px}#gpuDetail{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;color:var(--muted);max-height:150px;overflow:auto}
