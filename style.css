@@ -95,3 +95,11 @@ a[download]{text-align:center;text-decoration:none}
 
 @media(max-width:760px) and (orientation:portrait) and (min-height:650px){.monitor{position:sticky;top:env(safe-area-inset-top,0px);z-index:3;box-shadow:0 5px 10px #101113a0}}
 @media(max-width:760px) and (max-height:649px){#stage{width:min(100%,calc(var(--frame-ratio) * 34vh));width:min(100%,calc(var(--frame-ratio) * 34dvh))}}
+
+#photo[data-feedback="pending"]{opacity:1;background:#343b44;border-color:#8796a6;color:var(--text)}
+#photo[data-feedback="done"]{background:var(--accent);border-color:var(--accent);color:#11151a}
+#photo[data-feedback="error"]{border-color:var(--red);color:var(--red)}
+#photo:active:not(:disabled){transform:scale(.96)}
+#stage.shutter::after{content:'';position:absolute;inset:0;background:#090b0d;pointer-events:none;z-index:2;animation:shutter-close 180ms ease-out both}
+@keyframes shutter-close{0%{opacity:.8}100%{opacity:0}}
+@media(prefers-reduced-motion:reduce){#stage.shutter::after{animation:none;opacity:0}#photo:active:not(:disabled){transform:none}}

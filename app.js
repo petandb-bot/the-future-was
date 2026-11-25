@@ -4,7 +4,7 @@ let canvas=$('screen');
 const params=[['exposure','Exposure',-2,2,.05],['contrast','Contrast',.5,2.5,.05],['character','Character',0,1,.01],['memory','Memory',0,1,.01],['signal','Signal loss',0,1,.01],['texture','Display texture',0,1,.01],['rate','Internal frame rate',2,30,1],['scanSeconds','Scan period (s)',1,16,.5],['resolution','Sensor scale',.5,2,.25]];
 const mobile=matchMedia('(max-width: 760px) and (pointer: coarse)').matches;
 const portraitStart=mobile&&matchMedia('(orientation: portrait)').matches;
-let gpuState='starting',gpuEpoch=0,restoreTimer=null,fallbackReason='',mediaEpoch=0,photoPending=false;
+let gpuState='starting',gpuEpoch=0,restoreTimer=null,fallbackReason='',mediaEpoch=0,photoPending=false,photoFeedbackTimer=null;
 let mode=0,s,engine,source='demo',input=null,stream=null,url=null,facing='environment',busy=false,rec=null,recStream=null,recTimer=null,recFailed=false,audioGraph=null,audioDest=null,lastResult=null,lastURL=null,lastStep=-1,lastPresent=-1,fpsStart=0,frames=0,dirty=true,lastError='',lastInputTime=-1,sourceUploaded=false,stopReason='',recordWhole=false,recordStart=0,bytesRecorded=0;
 const demo=document.createElement('canvas');demo.width=640;demo.height=480;const ctx=demo.getContext('2d',{alpha:false});
 const staging=document.createElement('canvas'),stageCtx=staging.getContext('2d',{alpha:false});
@@ -192,12 +192,12 @@ function result(blob,name){
  clearTakeMedia();
  if(lastURL)URL.revokeObjectURL(lastURL);
  lastResult={blob,name};lastURL=URL.createObjectURL(blob);
- $('share').classList.add('has-take');$('captureStatus').textContent=blob.type.startsWith('video/')?'Recording ready':'Photo ready';locks();
+ const isVideo=blob.type.startsWith('video/');$('share').classList.add('has-take');$('previewText').textContent=isVideo?'View video':'View photo';$('share').setAttribute('aria-label',isVideo?'Preview latest video':'Preview latest photo');$('captureStatus').textContent=isVideo?'Recording ready':'Photo captured';locks();
 }
 function openTake(){
  if(!lastResult||rec||busy||photoPending||$('result').hasAttribute('open'))return;
  const dialog=$('result'),v=$('resultVideo'),image=$('resultImage'),{blob,name}=lastResult;
- clearTakeMedia();const isVideo=blob.type.startsWith('video/');
+ clearTakeMedia();const isVideo=blob.type.startsWith('video/');$('takeTitle').textContent=isVideo?'Video':'Photo';
  v.hidden=!isVideo;image.hidden=isVideo;if(isVideo)v.src=lastURL;else image.src=lastURL;
  $('download').href=lastURL;$('download').download=name;
  $('resultInfo').textContent=name+' · '+(blob.size/1024/1024).toFixed(2)+' MB'+(isVideo?(blob.type.includes('mp4')?' · MP4':' · WebM'):'');
@@ -219,10 +219,28 @@ function closeTake(){
  if(typeof dialog.close==='function'&&!dialog.classList.contains('fallback-dialog'))dialog.close();else dialog.removeAttribute('open');
  afterTakeClose();
 }
+function photoFeedback(state){
+ const b=$('photo'),stage=$('stage');
+ clearTimeout(photoFeedbackTimer);
+ b.dataset.feedback=state;
+ $('photoText').textContent=state==='pending'?'Capturing…':state==='done'?'Captured':state==='error'?'Try again':'Take photo';
+ b.setAttribute('aria-busy',String(state==='pending'));
+ if(state==='pending'){
+  stage.classList.remove('shutter');void stage.offsetWidth;stage.classList.add('shutter');
+ }else if(state==='done'||state==='error'){
+  if(state==='error')stage.classList.remove('shutter');
+  photoFeedbackTimer=setTimeout(()=>photoFeedback('idle'),1100);
+ }else stage.classList.remove('shutter');
+}
 function photo(){
  if(!gpuReady()||engine.first||busy||rec||photoPending||$('result').hasAttribute('open'))return;
- photoPending=true;locks();let done=false;
- const finishPhoto=b=>{if(done)return;done=true;clearTimeout(timer);photoPending=false;locks();if(b){result(b,'signal-'+stamp()+'.png');status('');}else status('PNG export failed.');};
+ photoPending=true;photoFeedback('pending');locks();let done=false;
+ const finishPhoto=b=>{
+  if(done)return;done=true;clearTimeout(timer);photoPending=false;
+  if(b&&b.size>0){result(b,'signal-'+stamp()+'.png');photoFeedback('done');status('');}
+  else{photoFeedback('error');status('Photo capture failed. Try again.');}
+  locks();
+ };
  const timer=setTimeout(()=>finishPhoto(null),8000);
  try{canvas.toBlob(finishPhoto,'image/png');}catch{finishPhoto(null);}
 }
