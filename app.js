@@ -2,29 +2,72 @@
 (()=>{'use strict';
 const $=id=>document.getElementById(id), modes=window.SignalModes, canvas=$('screen'), video=$('inputVideo'), clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const params=[['exposure','Exposure',-2,2,.05],['contrast','Contrast',.5,2.5,.05],['character','Character',0,1,.01],['memory','Memory',0,1,.01],['signal','Signal loss',0,1,.01],['texture','Display texture',0,1,.01],['rate','Internal frame rate',2,30,1],['scanSeconds','Scan period (s)',1,16,.5],['resolution','Sensor scale',.5,2,.25]];
+// GPU 復旧は描画・録画の状態と分離し、録画終了後に一度だけ再初期化する。
+const mobile=matchMedia('(max-width: 760px) and (pointer: coarse)').matches;
+const portraitStart=mobile&&matchMedia('(orientation: portrait)').matches;
+let gpuState='starting',gpuEpoch=0,restoreTimer=null;
 let mode=0,s,engine,source='demo',input=null,stream=null,url=null,facing='environment',busy=false,rec=null,recStream=null,recTimer=null,recFailed=false,audioGraph=null,audioDest=null,lastResult=null,lastURL=null,lastStep=-1,lastPresent=-1,fpsStart=0,frames=0,dirty=true,lastError='',lastInputTime=-1,sourceUploaded=false,stopReason='',recordWhole=false,recordStart=0,bytesRecorded=0;
 const demo=document.createElement('canvas');demo.width=640;demo.height=480;const ctx=demo.getContext('2d',{alpha:false});
 // 巨大な入力は最大1280pxに縮小してからGPUへ転送する。
 const staging=document.createElement('canvas'),stageCtx=staging.getContext('2d',{alpha:false});
-function uploadInput(el,w,h){const f=Math.min(1,1280/Math.max(w,h));if(f===1)return engine.upload(el,w,h);const a=Math.max(1,Math.round(w*f)),b=Math.max(1,Math.round(h*f));if(staging.width!==a||staging.height!==b){staging.width=a;staging.height=b;}stageCtx.drawImage(el,0,0,a,b);return engine.upload(staging,a,b);}
+function uploadInput(el,w,h){const f=Math.min(1,(mobile?720:1280)/Math.max(w,h));if(f===1)return engine.upload(el,w,h);const a=Math.max(1,Math.round(w*f)),b=Math.max(1,Math.round(h*f));if(staging.width!==a||staging.height!==b){staging.width=a;staging.height=b;}stageCtx.drawImage(el,0,0,a,b);return engine.upload(staging,a,b);}
 const status=t=>$('status').textContent=t;
-function defaults(i){const m=modes[i];return {exposure:0,contrast:1.15,character:m.char,memory:m.mem,signal:m.signal,texture:m.texture,rate:m.fps,scanSeconds:8,resolution:1,palette:m.pal,seed:1987,scanMode:0,aspect:'native',size:720,audio:'silent'};}
+function defaults(i){const m=modes[i];return {exposure:0,contrast:1.15,character:m.char,memory:m.mem,signal:m.signal,texture:m.texture,rate:m.fps,scanSeconds:8,resolution:1,palette:m.pal,seed:1987,scanMode:0,aspect:portraitStart?'9:16':'native',size:mobile?480:720,audio:'silent'};}
 function timeLabel(n){n=Math.floor(Math.max(0,n||0));return `${Math.floor(n/60)}:${String(n%60).padStart(2,'0')}`;}
-function sourceSize(){return source==='demo'?[640,480]:source==='photo'?[input.naturalWidth,input.naturalHeight]:[video.videoWidth||640,video.videoHeight||480];}
-function updateSize(){if(rec||!engine||engine.gl.isContextLost())return;const w=Math.round(modes[mode].w*s.resolution),h=Math.round(modes[mode].h*s.resolution);const [a,b]=s.aspect==='native'?[w,h]:s.aspect==='original'?sourceSize():s.aspect.split(':').map(Number);let ow=s.size*a/Math.max(a,b),oh=s.size*b/Math.max(a,b);if(s.aspect==='native'){const f=Math.max(1,Math.floor(s.size/Math.max(w,h)));if(w*f%2===0&&h*f%2===0){ow=w*f;oh=h*f;}}ow=Math.max(2,Math.round(ow/2)*2);oh=Math.max(2,Math.round(oh/2)*2);if(canvas.width!==ow||canvas.height!==oh){canvas.width=ow;canvas.height=oh;}engine.configure(w,h);$('spec').textContent=`${w}×${h} / ${s.rate} FPS → ${ow}×${oh}`;dirty=true;}
+function sourceSize(){return source==='demo'?[640,480]:source==='photo'?[input?.naturalWidth||640,input?.naturalHeight||480]:[video.videoWidth||640,video.videoHeight||480];}
+// 縦長時は出力だけでなく低解像度センサーも縦長にする。
+// 長辺の画素密度を保持し、ネイティブ・横長の既存構図は維持する。
+function geometry(m,s,sourceWH){
+ const native=[Math.max(2,Math.round(m.w*s.resolution)),Math.max(2,Math.round(m.h*s.resolution))];
+ const [a,b]=s.aspect==='native'?native:s.aspect==='original'?sourceWH:s.aspect.split(':').map(Number);
+ const portrait=a<b&&s.aspect!=='native';
+ const [w,h]=portrait?[Math.max(2,Math.round(Math.max(...native)*a/b)),Math.max(...native)]:native;
+ let ow=s.size*a/Math.max(a,b),oh=s.size*b/Math.max(a,b);
+ if(s.aspect==='native'){const f=Math.max(1,Math.floor(s.size/Math.max(w,h)));if(w*f%2===0&&h*f%2===0){ow=w*f;oh=h*f;}}
+ const even=n=>Math.max(2,Math.round(n/2)*2);
+ return {w,h,ow:even(ow),oh:even(oh),portrait};
+}
+function updateSize(){
+ if(rec||!engine||gpuState!=='ready'||engine.gl.isContextLost())return;
+ const {w,h,ow,oh,portrait}=geometry(modes[mode],s,sourceSize());
+ try{
+  if(canvas.width!==ow)canvas.width=ow;
+  if(canvas.height!==oh)canvas.height=oh;
+  engine.configure(w,h);
+  $('stage').classList.toggle('portrait',portrait);
+  $('spec').textContent=w+'×'+h+' / '+effectiveRate()+' FPS → '+ow+'×'+oh;
+  dirty=true;
+ }catch(e){if(engine.gl.isContextLost())return;gpuFailure('GPU allocation failed: '+e.message);}
+}
+function effectiveRate(){return Math.min(s.rate,mobile?24:30);}
+function gpuReady(){return gpuState==='ready'&&!!engine&&!engine.gl.isContextLost();}
+function gpuFailure(message){
+ gpuState='failed';$('gpu').textContent='GPU ERROR';$('recover').hidden=false;status(message);locks();
+}
+function restoreGPU(){
+ if(gpuState!=='restore-pending'||rec||busy||document.hidden)return;
+ gpuState='restoring';
+ try{
+  engine.init();gpuState='ready';resetMemory();updateSize();
+  if(gpuState!=='ready')return;
+  clearTimeout(restoreTimer);$('recover').hidden=true;$('gpu').textContent='WEBGL / LIVE';
+  status('WebGL recovered. Image memory reset.');locks();
+ }catch(e){gpuFailure('WebGL recovery failed: '+e.message);}
+}
 function resetMemory(){engine?.reset();lastStep=-1;lastInputTime=-1;sourceUploaded=false;dirty=true;}
 function sync(){const m=modes[mode];$('deviceName').textContent=m.id;$('deviceSubtitle').textContent=m.sub;$('description').textContent=m.desc;$('series').textContent=m.fiction?'UNRELEASED':'ARCHIVE';document.querySelectorAll('[data-device]').forEach((b,i)=>{b.classList.toggle('selected',i===mode);b.setAttribute('aria-pressed',i===mode);});for(const [k] of params){$('p-'+k).value=s[k];$('v-'+k).textContent=Number(s[k]).toFixed(k==='rate'?0:2);}$('row-scanSeconds').hidden=mode!==5;$('scanMode').parentElement.hidden=mode!==5;for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).value=s[k];updateSize();}
 function choose(i){if(rec||busy)return;const common={aspect:s.aspect,size:s.size,audio:s.audio,seed:s.seed};mode=(i+modes.length)%modes.length;s={...defaults(mode),...common};resetMemory();sync();}
 function locks(){
- const lock=!!rec||busy, ready=!!engine&&!engine.gl.isContextLost();
+ const lock=!!rec||busy, ready=gpuReady();
  for(const id of ['camera','import','demo','prev','next','reset','random','loadPreset','aspect','size','audio','p-resolution','scanMode','seed','play','seek','p-rate','palette','whole','format']) if($(id))$(id).disabled=lock||!ready;
  $('flip').disabled=lock||!ready||source!=='camera';
- $('record').disabled=busy||!ready||(rec?rec.state==='inactive':(!canvas.captureStream||!window.MediaRecorder||engine.first));
+ $('record').disabled=busy||!ready||(rec?rec.state==='inactive'||!!rec.saveTimeout:(!canvas.captureStream||!window.MediaRecorder||engine.first));
+ $('recover').disabled=lock;
  $('photo').disabled=busy||!ready||!!rec||engine.first;
  document.querySelectorAll('[data-device]').forEach(b=>b.disabled=lock||!ready);
  $('whole').disabled=lock||source!=='video';
 }
-function createUI(){modes.forEach((m,i)=>{const b=document.createElement('button');b.textContent=m.id;b.dataset.device=i;b.onclick=()=>choose(i);$('devices').append(b);});params.forEach(([k,label,min,max,step],i)=>{const row=document.createElement('div');row.className='param';row.id='row-'+k;row.innerHTML=`<label for="p-${k}">${label}<output id="v-${k}"></output></label><input id="p-${k}" type="range" min="${min}" max="${max}" step="${step}">`;$(i<4?'basic':'extra').append(row);$('p-'+k).oninput=e=>{s[k]=Number(e.target.value);$('v-'+k).textContent=s[k].toFixed(k==='rate'?0:2);if(k==='resolution'){updateSize();resetMemory();}if(k==='rate'){updateSize();lastStep=-1;}dirty=true;};});['Device / colour','Neutral monochrome','Blue-grey','Amber'].forEach((p,i)=>$('palette').add(new Option(p,i)));for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).onchange=()=>{s[k]=['aspect','audio'].includes(k)?$(k).value:Number($(k).value);if(k==='seed'){s.seed=clamp(Math.floor(s.seed||0),0,99999);$(k).value=s.seed;}if(k==='aspect'||k==='size')updateSize();if(['scanMode','seed','palette'].includes(k))resetMemory();if(k==='audio'&&source==='camera')status('Restart Camera to apply audio setting.');dirty=true;};$('prev').onclick=()=>choose(mode-1);$('next').onclick=()=>choose(mode+1);$('reset').onclick=()=>choose(mode);$('random').onclick=()=>{s.seed=Math.floor(Math.random()*100000);let x=s.seed>>>0;const rnd=()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;};const d=defaults(mode);s.exposure=(rnd()-.5);s.contrast=.9+rnd()*.65;for(const k of ['character','memory','signal','texture'])s[k]=clamp(d[k]+(rnd()-.5)*.36,0,1);resetMemory();sync();};$('savePreset').onclick=()=>download(new Blob([JSON.stringify({version:1,device:modes[mode].id,settings:s},null,2)],{type:'application/json'}),'signal-preset.json');$('loadPreset').onclick=()=>$('presetFile').click();$('presetFile').onchange=async e=>{try{const f=e.target.files[0];if(!f||rec)return;const p=JSON.parse(await f.text());if(rec||busy)return;const i=modes.findIndex(m=>m.id===p.device);if(p.version!==1||i<0||!p.settings)throw Error('Unknown preset');const d=defaults(i),o=p.settings;for(const [k,,min,max] of params)if(Number.isFinite(o[k]))d[k]=clamp(o[k],min,max);for(const [k,min,max] of [['palette',0,3],['scanMode',0,1],['seed',0,99999]])if(Number.isFinite(o[k]))d[k]=clamp(Math.round(o[k]),min,max);if(['native','original','1:1','4:3','9:16','16:9'].includes(o.aspect))d.aspect=o.aspect;if([480,720,1080].includes(o.size))d.size=o.size;if(['silent','source'].includes(o.audio))d.audio=o.audio;mode=i;s=d;resetMemory();sync();status('Preset loaded.');}catch(err){status(err.message);}finally{e.target.value='';}};let x=0,y=0;canvas.addEventListener('touchstart',e=>{x=e.changedTouches[0].clientX;y=e.changedTouches[0].clientY;},{passive:true});canvas.addEventListener('touchend',e=>{let dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.5)choose(mode+(dx<0?1:-1));},{passive:true});}
+function createUI(){modes.forEach((m,i)=>{const b=document.createElement('button');b.textContent=m.id;b.dataset.device=i;b.onclick=()=>choose(i);$('devices').append(b);});params.forEach(([k,label,min,max,step],i)=>{const row=document.createElement('div');row.className='param';row.id='row-'+k;row.innerHTML=`<label for="p-${k}">${label}<output id="v-${k}"></output></label><input id="p-${k}" type="range" min="${min}" max="${max}" step="${step}">`;$(i<4?'basic':'extra').append(row);$('p-'+k).oninput=e=>{s[k]=Number(e.target.value);$('v-'+k).textContent=s[k].toFixed(k==='rate'?0:2);if(k==='resolution'){updateSize();resetMemory();}if(k==='rate'){updateSize();lastStep=-1;}dirty=true;};});['Device / colour','Neutral monochrome','Blue-grey','Amber'].forEach((p,i)=>$('palette').add(new Option(p,i)));for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).onchange=()=>{s[k]=['aspect','audio'].includes(k)?$(k).value:Number($(k).value);if(k==='seed'){s.seed=clamp(Math.floor(s.seed||0),0,99999);$(k).value=s.seed;}if(k==='aspect'||k==='size')updateSize();if(k==='aspect')resetMemory();if(['scanMode','seed','palette'].includes(k))resetMemory();if(k==='audio'&&source==='camera')status('Restart Camera to apply audio setting.');dirty=true;};$('prev').onclick=()=>choose(mode-1);$('next').onclick=()=>choose(mode+1);$('reset').onclick=()=>choose(mode);$('random').onclick=()=>{s.seed=Math.floor(Math.random()*100000);let x=s.seed>>>0;const rnd=()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;};const d=defaults(mode);s.exposure=(rnd()-.5);s.contrast=.9+rnd()*.65;for(const k of ['character','memory','signal','texture'])s[k]=clamp(d[k]+(rnd()-.5)*.36,0,1);resetMemory();sync();};$('savePreset').onclick=()=>download(new Blob([JSON.stringify({version:1,device:modes[mode].id,settings:s},null,2)],{type:'application/json'}),'signal-preset.json');$('loadPreset').onclick=()=>$('presetFile').click();$('presetFile').onchange=async e=>{try{const f=e.target.files[0];if(!f||rec)return;const p=JSON.parse(await f.text());if(rec||busy)return;const i=modes.findIndex(m=>m.id===p.device);if(p.version!==1||i<0||!p.settings)throw Error('Unknown preset');const d=defaults(i),o=p.settings;for(const [k,,min,max] of params)if(Number.isFinite(o[k]))d[k]=clamp(o[k],min,max);for(const [k,min,max] of [['palette',0,3],['scanMode',0,1],['seed',0,99999]])if(Number.isFinite(o[k]))d[k]=clamp(Math.round(o[k]),min,max);if(['native','original','1:1','4:3','9:16','16:9'].includes(o.aspect))d.aspect=o.aspect;if([480,720,1080].includes(o.size))d.size=o.size;if(['silent','source'].includes(o.audio))d.audio=o.audio;mode=i;s=d;resetMemory();sync();status('Preset loaded.');}catch(err){status(err.message);}finally{e.target.value='';}};let x=0,y=0;canvas.addEventListener('touchstart',e=>{x=e.changedTouches[0].clientX;y=e.changedTouches[0].clientY;},{passive:true});canvas.addEventListener('touchend',e=>{let dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.5)choose(mode+(dx<0?1:-1));},{passive:true});}
 function release(){
  const old=stream;stream=null;old?.getTracks().forEach(t=>t.stop());
  video.pause();video.srcObject=null;video.removeAttribute('src');video.load();
@@ -52,7 +95,7 @@ async function camera(){
  if(rec||busy)return;busy=true;locks();release();changed('demo','DEMO SIGNAL');
  try{
   if(!navigator.mediaDevices?.getUserMedia)throw Error('Camera requires HTTPS or localhost.');
-  const options={video:{facingMode:{ideal:facing},width:{ideal:960},height:{ideal:720},frameRate:{ideal:24,max:30}},audio:s.audio==='source'};
+  const portrait=s.aspect==='9:16';const options={video:{facingMode:{ideal:facing},width:{ideal:portrait?540:960},height:{ideal:portrait?960:540},frameRate:{ideal:mobile?20:24,max:mobile?24:30}},audio:s.audio==='source'};
   try{stream=await navigator.mediaDevices.getUserMedia(options);}catch(e){if(options.audio)stream=await navigator.mediaDevices.getUserMedia({...options,audio:false});else throw e;}
   if(document.hidden){release();throw Error('Camera stopped because the app is in the background.');}
   video.srcObject=stream;video.muted=true;await withTimeout(video.play(),12000,'Camera playback timed out.');
@@ -80,28 +123,28 @@ async function importFile(f){
 }
 function drawDemo(t){const w=640,h=480;const sky=ctx.createLinearGradient(0,0,0,h);sky.addColorStop(0,'#7c9dad');sky.addColorStop(.55,'#e9c8a5');sky.addColorStop(1,'#4a5158');ctx.fillStyle=sky;ctx.fillRect(0,0,w,h);ctx.fillStyle='#e8dfac';ctx.beginPath();ctx.arc(420+Math.sin(t*.12)*30,101,38,0,7);ctx.fill();for(let i=0;i<14;i++){let x=i*53-(t*9%53),bh=100+(i*137%165);ctx.fillStyle=['#536b72','#84786d','#5b5967','#a19478'][i%4];ctx.fillRect(x,h-100-bh,46,bh);for(let y=h-100-bh+13;y<h-115;y+=18)for(let k=0;k<3;k++){ctx.fillStyle=(i+k+Math.floor(y/18))%5===0?'#eac17e':'#33414a';ctx.fillRect(x+5+k*13,y,7,10);}}ctx.fillStyle='#363f41';ctx.fillRect(0,380,w,100);ctx.fillStyle='#c7bda2';for(let i=0;i<9;i++)ctx.fillRect(i*84-(t*45%84),430,46,3);for(let i=0;i<3;i++){let x=(t*(42+i*14)+i*239)%740-80;ctx.fillStyle=['#b5624d','#e1c877','#74958f'][i];ctx.fillRect(x,397+i*11,62,17);ctx.fillRect(x+13,387+i*11,31,12);ctx.fillStyle='#252e32';ctx.fillRect(x+9,411+i*11,11,7);ctx.fillRect(x+43,411+i*11,11,7);}}
 function loop(ms){
- requestAnimationFrame(loop);if(document.hidden||!engine||engine.gl.isContextLost())return;
- const t=ms/1000;try{
-  if(lastStep<0||t-lastStep>=1/s.rate-.003){
+ requestAnimationFrame(loop);if(document.hidden)return;if(gpuState==='restore-pending')restoreGPU();if(!gpuReady())return;
+ const t=ms/1000,rate=effectiveRate();try{
+  if(lastStep<0||t-lastStep>=1/rate-.003){
    const el=source==='demo'?demo:source==='photo'?input:video;
    if(source==='demo')drawDemo(t);
    if(el&&(source==='demo'||source==='photo'||video.readyState>=2)){
     const [w,h]=sourceSize();
     // 静止画や同一デコードフレームは GPU に再転送しない。時間効果は更新を続ける。
-    const needsUpload=!sourceUploaded||source==='demo'||source==='camera'||(source==='video'&&video.currentTime!==lastInputTime);
+    const needsUpload=!sourceUploaded||source==='demo'||((source==='camera'||source==='video')&&video.currentTime!==lastInputTime);
     if(!needsUpload||uploadInput(el,w,h)){
      sourceUploaded=true;lastInputTime=video.currentTime;
      const first=engine.first;engine.step(t,mode,s,source==='camera'&&facing==='user'?1:0);
-     lastStep=lastStep<0?t:t-Math.max(0,Math.min(1/s.rate,t-lastStep-1/s.rate));frames++;dirty=true;if(first)locks();
+     lastStep=lastStep<0?t:t-Math.max(0,Math.min(1/rate,t-lastStep-1/rate));frames++;dirty=true;if(first)locks();
     }
    }
   }
   // 録画中は一定間隔で同じ画を再提示し、意図した低fpsを保持する。
-  if(dirty||(rec&&t-lastPresent>=1/30-.003)){engine.present(mode,s);dirty=false;lastPresent=t;}
+  if(dirty||(rec&&t-lastPresent>=1/(mobile?24:30)-.003)){engine.present(mode,s);dirty=false;lastPresent=t;}
   if(t-fpsStart>=1){$('fps').textContent=`${Math.round(frames/(t-fpsStart))} GPU updates/s`;fpsStart=t;frames=0;}
   if(source==='video'&&!$('seek').matches(':active')){if(Number.isFinite(video.duration)){$('seek').max=video.duration;$('seek').value=video.currentTime;}$('position').textContent=timeLabel(video.currentTime);}
   lastError='';
- }catch(e){if(lastError!==e.message){lastError=e.message;status('Render error: '+e.message);if(rec)stop('Render interrupted');}}
+ }catch(e){if(!gpuReady())return;if(lastError!==e.message){lastError=e.message;status('Render error: '+e.message);if(rec)stop('Render interrupted');}}
 }
 function download(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000);}
 const stamp=()=>new Date().toISOString().replace(/[:.]/g,'-');
@@ -113,7 +156,7 @@ function result(blob,name){
  $('resultInfo').textContent=`${name} · ${(blob.size/1024/1024).toFixed(2)} MB${isVideo?(blob.type.includes('mp4')?' · MP4':' · WebM (convert to MP4 if required)'):''}`;
  $('result').hidden=false;$('share').disabled=false;
 }
-function photo(){if(!engine||engine.first)return;canvas.toBlob(b=>b?result(b,`signal-${stamp()}.png`):status('PNG export failed.'),'image/png');}
+function photo(){if(!gpuReady()||engine.first)return;canvas.toBlob(b=>b?result(b,`signal-${stamp()}.png`):status('PNG export failed.'),'image/png');}
 async function share(){if(!lastResult)return;const {blob,name}=lastResult;try{const f=new File([blob],name,{type:blob.type});if(navigator.share&&navigator.canShare?.({files:[f]}))await navigator.share({files:[f],title:name});else download(blob,name);}catch(e){if(e.name!=='AbortError')status('Share failed. Use Download.');}}
 async function audioTrack(){
  if(s.audio!=='source')return null;
@@ -135,20 +178,21 @@ function cleanup(){
 function finish(r,chunks){
  if(rec!==r)return;clearInterval(recTimer);clearTimeout(r.saveTimeout);
  const mime=chunks.find(c=>c.type)?.type||r.mimeType||'video/webm',blob=new Blob(chunks,{type:mime});
- cleanup();rec=null;recordWhole=false;$('record').classList.remove('active');$('recordText').textContent='Record';$('recIndicator').hidden=true;if(engine&&!engine.gl.isContextLost()&&!engine.w)updateSize();locks();
+ cleanup();rec=null;recordWhole=false;$('record').classList.remove('active');$('recordText').textContent='Record';$('recIndicator').hidden=true;if(gpuState==='ready')updateSize();locks();
  if(blob.size){result(blob,`signal-${stamp()}.${mime.includes('mp4')?'mp4':'webm'}`);status(recFailed?'Encoder interrupted. Partial take available; check playback.':`${stopReason||'Recording finished'}. Download or Share / Save.`);}
  else status('Recording failed or empty. Try 480 px or another format.');
 }
 async function record(){
- if(rec||busy||!engine||engine.first||document.hidden)return;
+ if(rec||busy||!gpuReady()||engine.first||document.hidden)return;
+ const startEpoch=gpuEpoch;const checkGPU=()=>{if(startEpoch!==gpuEpoch||!gpuReady()||document.hidden)throw Error('GPU or foreground changed; retry recording.');};
  busy=true;locks();recFailed=false;stopReason='';recordWhole=source==='video'&&$('whole').checked;
  try{
   if(recordWhole&&video.duration>120)throw Error('Whole clip limit is 120 seconds. Use a shorter clip or Record a take.');
   // 音声の開始はクリック直後に要求して iOS のユーザー操作制約に対応する。
-  recStream=canvas.captureStream(30);const a=await audioTrack();if(a)recStream.addTrack(a);
-  if(recordWhole){video.pause();video.loop=false;if(video.currentTime>.001){video.currentTime=0;await waitForMedia(video,'seeked',()=>!video.seeking&&video.currentTime<.01);}await waitForMedia(video,'loadeddata',()=>video.readyState>=2);resetMemory();const [w,h]=sourceSize();uploadInput(video,w,h);engine.step(performance.now()/1000,mode,s,0);engine.present(mode,s);sourceUploaded=true;lastInputTime=video.currentTime;}
+  recStream=canvas.captureStream(mobile?24:30);const a=await audioTrack();if(a)recStream.addTrack(a);checkGPU();
+  if(recordWhole){video.pause();video.loop=false;if(video.currentTime>.001){video.currentTime=0;await waitForMedia(video,'seeked',()=>!video.seeking&&video.currentTime<.01);}await waitForMedia(video,'loadeddata',()=>video.readyState>=2);checkGPU();resetMemory();const [w,h]=sourceSize();uploadInput(video,w,h);engine.step(performance.now()/1000,mode,s,0);engine.present(mode,s);sourceUploaded=true;lastInputTime=video.currentTime;}
   if(source==='video'&&video.paused&&!recordWhole)await withTimeout(video.play(),5000,'Tap Play before recording.');
-  if(document.hidden)throw Error('Recording requires the app in the foreground.');
+  checkGPU();
   const mp4=a?['video/mp4;codecs=avc1,mp4a.40.2','video/mp4']:['video/mp4;codecs=avc1','video/mp4'];
   const webm=a?['video/webm;codecs=vp8,opus','video/webm']:['video/webm;codecs=vp8','video/webm'];
   const pref=$('format').value, types=pref==='mp4'?mp4:pref==='webm'?webm:[...mp4,...webm,''];
@@ -158,7 +202,7 @@ async function record(){
    let candidate;try{
     if(mimeType&&MediaRecorder.isTypeSupported&&!MediaRecorder.isTypeSupported(mimeType))continue;
     candidate=new MediaRecorder(recStream,{...(mimeType?{mimeType}:{}),videoBitsPerSecond:canvas.width*canvas.height>600000?5000000:2500000});
-    const local=[];candidate.ondataavailable=e=>{if(e.data.size){local.push(e.data);if(rec===candidate){bytesRecorded+=e.data.size;if(bytesRecorded>=160*1024*1024)stop('Size limit reached');}}};
+    const local=[];candidate.savedChunks=local;candidate.ondataavailable=e=>{if(e.data.size){local.push(e.data);if(rec===candidate){bytesRecorded+=e.data.size;if(bytesRecorded>=160*1024*1024)stop('Size limit reached');}}};
     candidate.onerror=e=>{if(rec!==candidate)return;recFailed=true;stop('Encoder error');};candidate.onstop=()=>finish(candidate,local);
     candidate.start(1000);r=candidate;break;
    }catch(e){errors.push(e.message);if(candidate){candidate.onstop=null;candidate.ondataavailable=null;candidate.onerror=null;if(candidate.state!=='inactive')try{candidate.stop();}catch{}}}
@@ -174,11 +218,26 @@ function stop(reason=''){
  if(!rec)return;const r=rec;if(reason)stopReason=reason;if(r.saveTimeout)return;
  $('recordText').textContent='Saving…';$('record').disabled=true;clearInterval(recTimer);
  // 一部環境で stop イベントが返らない場合も操作不能にならないようにする。
- r.saveTimeout=setTimeout(()=>{if(rec!==r)return;recFailed=true;finish(r,[]);status('Encoder finalization timed out. Try 480 px or another format.');},12000);
- try{if(r.state!=='inactive')r.stop();}catch(e){recFailed=true;finish(r,[]);status('Recorder: '+e.message);}
+ r.saveTimeout=setTimeout(()=>{if(rec!==r)return;recFailed=true;finish(r,r.savedChunks||[]);status('Encoder finalization timed out. Check partial take, or try 480 px.');},12000);
+ try{if(r.state!=='inactive')r.stop();}catch(e){recFailed=true;finish(r,r.savedChunks||[]);status('Recorder: '+e.message);}
 }
 $('camera').onclick=camera;$('flip').onclick=()=>{facing=facing==='user'?'environment':'user';camera();};$('demo').onclick=useDemo;$('import').onclick=()=>$('file').click();$('file').onchange=e=>{importFile(e.target.files[0]);e.target.value='';};$('play').onclick=()=>video.paused?video.play().catch(e=>status(e.message)):video.pause();$('seek').oninput=e=>{video.currentTime=Number(e.target.value);resetMemory();};video.addEventListener('resize',()=>{if(!rec&&(source==='camera'||source==='video')){updateSize();sourceUploaded=false;}});video.addEventListener('ended',()=>{if(rec&&recordWhole)stop('Whole clip finished');});video.addEventListener('error',()=>{if(source==='video'&&rec)stop('Source decoding interrupted');});video.addEventListener('seeked',()=>{if(source==='video'&&!rec&&!busy)resetMemory();});$('photo').onclick=photo;$('record').onclick=()=>rec?stop():record();$('share').onclick=()=>{$('result').hidden=false;};$('nativeShare').onclick=share;$('closeResult').onclick=()=>{$('resultVideo').pause();$('result').hidden=true;};$('resultVideo').addEventListener('error',()=>{if(lastResult?.blob.type.startsWith('video/'))$('resultInfo').textContent+=' · Preview unavailable; check downloaded file.';});
-canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();status('WebGL context lost. Waiting for recovery.');if(rec)stop('GPU context lost');locks();});canvas.addEventListener('webglcontextrestored',()=>{try{engine.init();updateSize();resetMemory();locks();status('WebGL recovered.');}catch(e){status(e.message);}});document.addEventListener('visibilitychange',()=>{if(document.hidden&&rec)stop('App moved to background');else if(!document.hidden){lastStep=-1;sourceUploaded=false;}});window.addEventListener('pagehide',()=>{if(rec)stop();release();source='demo';});window.addEventListener('pageshow',e=>{if(e.persisted&&engine)changed('demo','DEMO SIGNAL');});
-try{engine=new window.SignalEngine(canvas);$('gpu').textContent='WEBGL / LIVE';s=defaults(mode);createUI();sync();locks();status(canvas.captureStream&&window.MediaRecorder?'Demo ready. Choose Camera or Import.':'Demo ready. Video recording unsupported in this browser; PNG available.');requestAnimationFrame(loop);}catch(e){$('gpu').textContent='GPU ERROR';status(e.message);locks();}
+canvas.addEventListener('webglcontextlost',e=>{
+ e.preventDefault();gpuEpoch++;gpuState='lost';$('gpu').textContent='GPU LOST';
+ $('recover').hidden=false;status('WebGL context lost. Waiting for recovery.');if(rec){recFailed=true;stop('GPU context lost');}
+ clearTimeout(restoreTimer);restoreTimer=setTimeout(()=>{if(gpuState==='lost')status('GPU not restored. Close other camera tabs, then Reload app.');},8000);locks();
+});
+canvas.addEventListener('webglcontextrestored',()=>{clearTimeout(restoreTimer);gpuState='restore-pending';$('gpu').textContent='GPU RECOVERING';locks();restoreGPU();});
+$('recover').onclick=()=>{if(!rec&&!busy)location.reload();};
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden){gpuEpoch++;if(rec)stop('App moved to background');}
+ else{lastStep=-1;sourceUploaded=false;if(engine)engine.lastTime=null;restoreGPU();}
+});
+window.addEventListener('pagehide',()=>{gpuEpoch++;if(rec)stop();release();source='demo';});
+window.addEventListener('pageshow',e=>{if(e.persisted&&engine)changed('demo','DEMO SIGNAL');});
+s=defaults(mode);createUI();sync();
+try{engine=new window.SignalEngine(canvas);gpuState='ready';$('gpu').textContent='WEBGL / LIVE';updateSize();locks();if(gpuReady())status(canvas.captureStream&&window.MediaRecorder?'Demo ready. Choose Camera or Import.':'Demo ready. Video recording unsupported in this browser; PNG available.');}
+catch(e){gpuFailure(e.message);}
+requestAnimationFrame(loop);
 if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
 })();
