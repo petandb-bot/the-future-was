@@ -1,16 +1,17 @@
 /* UI・入出力・録画。GPU処理は engine.js に委譲。 */
 (()=>{'use strict';
-const $=id=>document.getElementById(id), modes=window.SignalModes, canvas=$('screen'), video=$('inputVideo'), clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const $=id=>document.getElementById(id), modes=window.SignalModes, video=$('inputVideo'), clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+let canvas=$('screen');
 const params=[['exposure','Exposure',-2,2,.05],['contrast','Contrast',.5,2.5,.05],['character','Character',0,1,.01],['memory','Memory',0,1,.01],['signal','Signal loss',0,1,.01],['texture','Display texture',0,1,.01],['rate','Internal frame rate',2,30,1],['scanSeconds','Scan period (s)',1,16,.5],['resolution','Sensor scale',.5,2,.25]];
 // GPU 復旧は描画・録画の状態と分離し、録画終了後に一度だけ再初期化する。
 const mobile=matchMedia('(max-width: 760px) and (pointer: coarse)').matches;
 const portraitStart=mobile&&matchMedia('(orientation: portrait)').matches;
-let gpuState='starting',gpuEpoch=0,restoreTimer=null;
+let gpuState='starting',gpuEpoch=0,restoreTimer=null,gpuDetail='',fallbackReason='';
 let mode=0,s,engine,source='demo',input=null,stream=null,url=null,facing='environment',busy=false,rec=null,recStream=null,recTimer=null,recFailed=false,audioGraph=null,audioDest=null,lastResult=null,lastURL=null,lastStep=-1,lastPresent=-1,fpsStart=0,frames=0,dirty=true,lastError='',lastInputTime=-1,sourceUploaded=false,stopReason='',recordWhole=false,recordStart=0,bytesRecorded=0;
 const demo=document.createElement('canvas');demo.width=640;demo.height=480;const ctx=demo.getContext('2d',{alpha:false});
 // 巨大な入力は最大1280pxに縮小してからGPUへ転送する。
 const staging=document.createElement('canvas'),stageCtx=staging.getContext('2d',{alpha:false});
-function uploadInput(el,w,h){const f=Math.min(1,(mobile?720:1280)/Math.max(w,h));if(f===1)return engine.upload(el,w,h);const a=Math.max(1,Math.round(w*f)),b=Math.max(1,Math.round(h*f));if(staging.width!==a||staging.height!==b){staging.width=a;staging.height=b;}stageCtx.drawImage(el,0,0,a,b);return engine.upload(staging,a,b);}
+function uploadInput(el,w,h){if(engine.kind==='2d')return engine.upload(el,w,h);const f=Math.min(1,(mobile?720:1280)/Math.max(w,h));if(f===1)return engine.upload(el,w,h);const a=Math.max(1,Math.round(w*f)),b=Math.max(1,Math.round(h*f));if(staging.width!==a||staging.height!==b){staging.width=a;staging.height=b;}stageCtx.drawImage(el,0,0,a,b);return engine.upload(staging,a,b);}
 const status=t=>$('status').textContent=t;
 function defaults(i){const m=modes[i];return {exposure:0,contrast:1.15,character:m.char,memory:m.mem,signal:m.signal,texture:m.texture,rate:m.fps,scanSeconds:8,resolution:1,palette:m.pal,seed:1987,scanMode:0,aspect:portraitStart?'9:16':'native',size:mobile?480:720,audio:'silent'};}
 function timeLabel(n){n=Math.floor(Math.max(0,n||0));return `${Math.floor(n/60)}:${String(n%60).padStart(2,'0')}`;}
@@ -28,8 +29,9 @@ function geometry(m,s,sourceWH){
  return {w,h,ow:even(ow),oh:even(oh),portrait};
 }
 function updateSize(){
- if(rec||!engine||gpuState!=='ready'||engine.gl.isContextLost())return;
- const {w,h,ow,oh,portrait}=geometry(modes[mode],s,sourceSize());
+ if(rec||!engine||gpuState!=='ready'||engine.isLost())return;
+ let {w,h,ow,oh,portrait}=geometry(modes[mode],s,sourceSize());
+ if(engine.kind==='2d'){const scale=Math.min(1,192/Math.max(w,h));w=Math.max(2,Math.round(w*scale));h=Math.max(2,Math.round(h*scale));}
  try{
   if(canvas.width!==ow)canvas.width=ow;
   if(canvas.height!==oh)canvas.height=oh;
@@ -37,15 +39,38 @@ function updateSize(){
   $('stage').classList.toggle('portrait',portrait);
   $('spec').textContent=w+'×'+h+' / '+effectiveRate()+' FPS → '+ow+'×'+oh;
   dirty=true;
- }catch(e){if(engine.gl.isContextLost())return;gpuFailure('GPU allocation failed: '+e.message);}
+ }catch(e){if(engine.isLost())return;gpuFailure('GPU allocation failed: '+e.message);}
 }
-function effectiveRate(){return Math.min(s.rate,mobile?24:30);}
-function gpuReady(){return gpuState==='ready'&&!!engine&&!engine.gl.isContextLost();}
+function effectiveRate(){return Math.min(s.rate,engine?.kind==='2d'?12:mobile?24:30);}
+function gpuReady(){return gpuState==='ready'&&!!engine&&!engine.isLost();}
+function reportGPU(message){gpuDetail=String(message);$('gpuDetail').textContent=gpuDetail;$('diagnostics').hidden=false;}
 function gpuFailure(message){
- gpuState='failed';$('gpu').textContent='GPU ERROR';$('recover').hidden=false;status(message);locks();
+ reportGPU(message);
+ if(engine?.kind==='2d'){gpuState='failed';$('gpu').textContent='DRAW ERROR';$('recover').hidden=false;status(message);locks();return;}
+ queueFallback(message);
+}
+function queueFallback(message){
+ gpuEpoch++;fallbackReason=message;reportGPU(message);gpuState='fallback-pending';$('gpu').textContent='GPU FALLBACK';
+ if(rec){recFailed=true;stop('GPU interrupted');}locks();
+}
+function startFallback(){
+ if(gpuState!=='fallback-pending'||rec||busy||document.hidden)return;
+ clearTimeout(restoreTimer);gpuState='restoring';
+ try{
+  // WebGL が取得済みの canvas を 2D に変更することはできない。
+  // DOM は新しい canvas に交換し、録画が終了した後にだけ切り替える。
+  const old=canvas,next=old.cloneNode(false);
+  const fallback=new window.SignalCompatEngine(next);
+  old.replaceWith(next);canvas=next;engine=fallback;
+  gpuState='ready';resetMemory();updateSize();
+  if(gpuState!=='ready')return;
+  $('gpu').textContent='COMPAT / 2D';$('recover').hidden=false;
+  status('Compatibility mode / 12 FPS max. WebGL details below.');locks();
+ }catch(e){gpuState='failed';$('gpu').textContent='DRAW ERROR';$('recover').hidden=false;reportGPU(fallbackReason+' | Canvas 2D: '+e.message);status('Both rendering backends failed.');locks();}
 }
 function restoreGPU(){
  if(gpuState!=='restore-pending'||rec||busy||document.hidden)return;
+ if(!engine||engine.kind!=='webgl'){queueFallback('WebGL engine unavailable after restore.');return;}
  gpuState='restoring';
  try{
   engine.init();gpuState='ready';resetMemory();updateSize();
@@ -67,7 +92,7 @@ function locks(){
  document.querySelectorAll('[data-device]').forEach(b=>b.disabled=lock||!ready);
  $('whole').disabled=lock||source!=='video';
 }
-function createUI(){modes.forEach((m,i)=>{const b=document.createElement('button');b.textContent=m.id;b.dataset.device=i;b.onclick=()=>choose(i);$('devices').append(b);});params.forEach(([k,label,min,max,step],i)=>{const row=document.createElement('div');row.className='param';row.id='row-'+k;row.innerHTML=`<label for="p-${k}">${label}<output id="v-${k}"></output></label><input id="p-${k}" type="range" min="${min}" max="${max}" step="${step}">`;$(i<4?'basic':'extra').append(row);$('p-'+k).oninput=e=>{s[k]=Number(e.target.value);$('v-'+k).textContent=s[k].toFixed(k==='rate'?0:2);if(k==='resolution'){updateSize();resetMemory();}if(k==='rate'){updateSize();lastStep=-1;}dirty=true;};});['Device / colour','Neutral monochrome','Blue-grey','Amber'].forEach((p,i)=>$('palette').add(new Option(p,i)));for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).onchange=()=>{s[k]=['aspect','audio'].includes(k)?$(k).value:Number($(k).value);if(k==='seed'){s.seed=clamp(Math.floor(s.seed||0),0,99999);$(k).value=s.seed;}if(k==='aspect'||k==='size')updateSize();if(k==='aspect')resetMemory();if(['scanMode','seed','palette'].includes(k))resetMemory();if(k==='audio'&&source==='camera')status('Restart Camera to apply audio setting.');dirty=true;};$('prev').onclick=()=>choose(mode-1);$('next').onclick=()=>choose(mode+1);$('reset').onclick=()=>choose(mode);$('random').onclick=()=>{s.seed=Math.floor(Math.random()*100000);let x=s.seed>>>0;const rnd=()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;};const d=defaults(mode);s.exposure=(rnd()-.5);s.contrast=.9+rnd()*.65;for(const k of ['character','memory','signal','texture'])s[k]=clamp(d[k]+(rnd()-.5)*.36,0,1);resetMemory();sync();};$('savePreset').onclick=()=>download(new Blob([JSON.stringify({version:1,device:modes[mode].id,settings:s},null,2)],{type:'application/json'}),'signal-preset.json');$('loadPreset').onclick=()=>$('presetFile').click();$('presetFile').onchange=async e=>{try{const f=e.target.files[0];if(!f||rec)return;const p=JSON.parse(await f.text());if(rec||busy)return;const i=modes.findIndex(m=>m.id===p.device);if(p.version!==1||i<0||!p.settings)throw Error('Unknown preset');const d=defaults(i),o=p.settings;for(const [k,,min,max] of params)if(Number.isFinite(o[k]))d[k]=clamp(o[k],min,max);for(const [k,min,max] of [['palette',0,3],['scanMode',0,1],['seed',0,99999]])if(Number.isFinite(o[k]))d[k]=clamp(Math.round(o[k]),min,max);if(['native','original','1:1','4:3','9:16','16:9'].includes(o.aspect))d.aspect=o.aspect;if([480,720,1080].includes(o.size))d.size=o.size;if(['silent','source'].includes(o.audio))d.audio=o.audio;mode=i;s=d;resetMemory();sync();status('Preset loaded.');}catch(err){status(err.message);}finally{e.target.value='';}};let x=0,y=0;canvas.addEventListener('touchstart',e=>{x=e.changedTouches[0].clientX;y=e.changedTouches[0].clientY;},{passive:true});canvas.addEventListener('touchend',e=>{let dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.5)choose(mode+(dx<0?1:-1));},{passive:true});}
+function createUI(){modes.forEach((m,i)=>{const b=document.createElement('button');b.textContent=m.id;b.dataset.device=i;b.onclick=()=>choose(i);$('devices').append(b);});params.forEach(([k,label,min,max,step],i)=>{const row=document.createElement('div');row.className='param';row.id='row-'+k;row.innerHTML=`<label for="p-${k}">${label}<output id="v-${k}"></output></label><input id="p-${k}" type="range" min="${min}" max="${max}" step="${step}">`;$(i<4?'basic':'extra').append(row);$('p-'+k).oninput=e=>{s[k]=Number(e.target.value);$('v-'+k).textContent=s[k].toFixed(k==='rate'?0:2);if(k==='resolution'){updateSize();resetMemory();}if(k==='rate'){updateSize();lastStep=-1;}dirty=true;};});['Device / colour','Neutral monochrome','Blue-grey','Amber'].forEach((p,i)=>$('palette').add(new Option(p,i)));for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).onchange=()=>{s[k]=['aspect','audio'].includes(k)?$(k).value:Number($(k).value);if(k==='seed'){s.seed=clamp(Math.floor(s.seed||0),0,99999);$(k).value=s.seed;}if(k==='aspect'||k==='size')updateSize();if(k==='aspect')resetMemory();if(['scanMode','seed','palette'].includes(k))resetMemory();if(k==='audio'&&source==='camera')status('Restart Camera to apply audio setting.');dirty=true;};$('prev').onclick=()=>choose(mode-1);$('next').onclick=()=>choose(mode+1);$('reset').onclick=()=>choose(mode);$('random').onclick=()=>{s.seed=Math.floor(Math.random()*100000);let x=s.seed>>>0;const rnd=()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;};const d=defaults(mode);s.exposure=(rnd()-.5);s.contrast=.9+rnd()*.65;for(const k of ['character','memory','signal','texture'])s[k]=clamp(d[k]+(rnd()-.5)*.36,0,1);resetMemory();sync();};$('savePreset').onclick=()=>download(new Blob([JSON.stringify({version:1,device:modes[mode].id,settings:s},null,2)],{type:'application/json'}),'signal-preset.json');$('loadPreset').onclick=()=>$('presetFile').click();$('presetFile').onchange=async e=>{try{const f=e.target.files[0];if(!f||rec)return;const p=JSON.parse(await f.text());if(rec||busy)return;const i=modes.findIndex(m=>m.id===p.device);if(p.version!==1||i<0||!p.settings)throw Error('Unknown preset');const d=defaults(i),o=p.settings;for(const [k,,min,max] of params)if(Number.isFinite(o[k]))d[k]=clamp(o[k],min,max);for(const [k,min,max] of [['palette',0,3],['scanMode',0,1],['seed',0,99999]])if(Number.isFinite(o[k]))d[k]=clamp(Math.round(o[k]),min,max);if(['native','original','1:1','4:3','9:16','16:9'].includes(o.aspect))d.aspect=o.aspect;if([480,720,1080].includes(o.size))d.size=o.size;if(['silent','source'].includes(o.audio))d.audio=o.audio;mode=i;s=d;resetMemory();sync();status('Preset loaded.');}catch(err){status(err.message);}finally{e.target.value='';}};let x=0,y=0;$('stage').addEventListener('touchstart',e=>{x=e.changedTouches[0].clientX;y=e.changedTouches[0].clientY;},{passive:true});$('stage').addEventListener('touchend',e=>{let dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.5)choose(mode+(dx<0?1:-1));},{passive:true});}
 function release(){
  const old=stream;stream=null;old?.getTracks().forEach(t=>t.stop());
  video.pause();video.srcObject=null;video.removeAttribute('src');video.load();
@@ -123,7 +148,7 @@ async function importFile(f){
 }
 function drawDemo(t){const w=640,h=480;const sky=ctx.createLinearGradient(0,0,0,h);sky.addColorStop(0,'#7c9dad');sky.addColorStop(.55,'#e9c8a5');sky.addColorStop(1,'#4a5158');ctx.fillStyle=sky;ctx.fillRect(0,0,w,h);ctx.fillStyle='#e8dfac';ctx.beginPath();ctx.arc(420+Math.sin(t*.12)*30,101,38,0,7);ctx.fill();for(let i=0;i<14;i++){let x=i*53-(t*9%53),bh=100+(i*137%165);ctx.fillStyle=['#536b72','#84786d','#5b5967','#a19478'][i%4];ctx.fillRect(x,h-100-bh,46,bh);for(let y=h-100-bh+13;y<h-115;y+=18)for(let k=0;k<3;k++){ctx.fillStyle=(i+k+Math.floor(y/18))%5===0?'#eac17e':'#33414a';ctx.fillRect(x+5+k*13,y,7,10);}}ctx.fillStyle='#363f41';ctx.fillRect(0,380,w,100);ctx.fillStyle='#c7bda2';for(let i=0;i<9;i++)ctx.fillRect(i*84-(t*45%84),430,46,3);for(let i=0;i<3;i++){let x=(t*(42+i*14)+i*239)%740-80;ctx.fillStyle=['#b5624d','#e1c877','#74958f'][i];ctx.fillRect(x,397+i*11,62,17);ctx.fillRect(x+13,387+i*11,31,12);ctx.fillStyle='#252e32';ctx.fillRect(x+9,411+i*11,11,7);ctx.fillRect(x+43,411+i*11,11,7);}}
 function loop(ms){
- requestAnimationFrame(loop);if(document.hidden)return;if(gpuState==='restore-pending')restoreGPU();if(!gpuReady())return;
+ requestAnimationFrame(loop);if(document.hidden)return;if(gpuState==='restore-pending')restoreGPU();if(gpuState==='fallback-pending')startFallback();if(!gpuReady())return;
  const t=ms/1000,rate=effectiveRate();try{
   if(lastStep<0||t-lastStep>=1/rate-.003){
    const el=source==='demo'?demo:source==='photo'?input:video;
@@ -141,10 +166,10 @@ function loop(ms){
   }
   // 録画中は一定間隔で同じ画を再提示し、意図した低fpsを保持する。
   if(dirty||(rec&&t-lastPresent>=1/(mobile?24:30)-.003)){engine.present(mode,s);dirty=false;lastPresent=t;}
-  if(t-fpsStart>=1){$('fps').textContent=`${Math.round(frames/(t-fpsStart))} GPU updates/s`;fpsStart=t;frames=0;}
+  if(t-fpsStart>=1){$('fps').textContent=`${Math.round(frames/(t-fpsStart))} ${engine.kind==='2d'?'CPU':'GPU'} updates/s`;fpsStart=t;frames=0;}
   if(source==='video'&&!$('seek').matches(':active')){if(Number.isFinite(video.duration)){$('seek').max=video.duration;$('seek').value=video.currentTime;}$('position').textContent=timeLabel(video.currentTime);}
   lastError='';
- }catch(e){if(!gpuReady())return;if(lastError!==e.message){lastError=e.message;status('Render error: '+e.message);if(rec)stop('Render interrupted');}}
+ }catch(e){if(!gpuReady())return;if(lastError!==e.message){lastError=e.message;gpuFailure('Render error: '+e.message);if(rec)stop('Render interrupted');}}
 }
 function download(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000);}
 const stamp=()=>new Date().toISOString().replace(/[:.]/g,'-');
@@ -223,21 +248,22 @@ function stop(reason=''){
 }
 $('camera').onclick=camera;$('flip').onclick=()=>{facing=facing==='user'?'environment':'user';camera();};$('demo').onclick=useDemo;$('import').onclick=()=>$('file').click();$('file').onchange=e=>{importFile(e.target.files[0]);e.target.value='';};$('play').onclick=()=>video.paused?video.play().catch(e=>status(e.message)):video.pause();$('seek').oninput=e=>{video.currentTime=Number(e.target.value);resetMemory();};video.addEventListener('resize',()=>{if(!rec&&(source==='camera'||source==='video')){updateSize();sourceUploaded=false;}});video.addEventListener('ended',()=>{if(rec&&recordWhole)stop('Whole clip finished');});video.addEventListener('error',()=>{if(source==='video'&&rec)stop('Source decoding interrupted');});video.addEventListener('seeked',()=>{if(source==='video'&&!rec&&!busy)resetMemory();});$('photo').onclick=photo;$('record').onclick=()=>rec?stop():record();$('share').onclick=()=>{$('result').hidden=false;};$('nativeShare').onclick=share;$('closeResult').onclick=()=>{$('resultVideo').pause();$('result').hidden=true;};$('resultVideo').addEventListener('error',()=>{if(lastResult?.blob.type.startsWith('video/'))$('resultInfo').textContent+=' · Preview unavailable; check downloaded file.';});
 canvas.addEventListener('webglcontextlost',e=>{
- e.preventDefault();gpuEpoch++;gpuState='lost';$('gpu').textContent='GPU LOST';
- $('recover').hidden=false;status('WebGL context lost. Waiting for recovery.');if(rec){recFailed=true;stop('GPU context lost');}
- clearTimeout(restoreTimer);restoreTimer=setTimeout(()=>{if(gpuState==='lost')status('GPU not restored. Close other camera tabs, then Reload app.');},8000);locks();
+ e.preventDefault();if(e.target!==canvas||engine?.kind==='2d'||gpuState==='fallback-pending')return;gpuEpoch++;gpuState='lost';$('gpu').textContent='GPU LOST';
+ $('recover').hidden=false;reportGPU('WebGL context lost. '+(e.statusMessage||''));status('WebGL context lost. Waiting for recovery.');if(rec){recFailed=true;stop('GPU context lost');}
+ clearTimeout(restoreTimer);restoreTimer=setTimeout(()=>{if(gpuState==='lost')queueFallback('WebGL restoration timed out (8 seconds).');},8000);locks();
 });
-canvas.addEventListener('webglcontextrestored',()=>{clearTimeout(restoreTimer);gpuState='restore-pending';$('gpu').textContent='GPU RECOVERING';locks();restoreGPU();});
-$('recover').onclick=()=>{if(!rec&&!busy)location.reload();};
+canvas.addEventListener('webglcontextrestored',e=>{if(e.target!==canvas||engine?.kind==='2d'||gpuState!=='lost')return;clearTimeout(restoreTimer);gpuState='restore-pending';$('gpu').textContent='GPU RECOVERING';locks();restoreGPU();});
+$('recover').onclick=()=>{if(!rec&&!busy){if(lastResult&&!confirm('Save the last take before retrying WebGL. Reload anyway?'))return;location.reload();}};
 document.addEventListener('visibilitychange',()=>{
  if(document.hidden){gpuEpoch++;if(rec)stop('App moved to background');}
- else{lastStep=-1;sourceUploaded=false;if(engine)engine.lastTime=null;restoreGPU();}
+ else{lastStep=-1;sourceUploaded=false;if(engine)engine.lastTime=null;restoreGPU();if(gpuState==='fallback-pending')startFallback();}
 });
 window.addEventListener('pagehide',()=>{gpuEpoch++;if(rec)stop();release();source='demo';});
 window.addEventListener('pageshow',e=>{if(e.persisted&&engine)changed('demo','DEMO SIGNAL');});
 s=defaults(mode);createUI();sync();
 try{engine=new window.SignalEngine(canvas);gpuState='ready';$('gpu').textContent='WEBGL / LIVE';updateSize();locks();if(gpuReady())status(canvas.captureStream&&window.MediaRecorder?'Demo ready. Choose Camera or Import.':'Demo ready. Video recording unsupported in this browser; PNG available.');}
 catch(e){gpuFailure(e.message);}
+if(gpuState==='fallback-pending')startFallback();
 requestAnimationFrame(loop);
 if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
 })();

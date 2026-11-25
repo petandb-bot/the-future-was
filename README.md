@@ -1,4 +1,4 @@
-# The Future Was Small — v0.1.2
+# The Future Was Small — v0.1.3
 
 古い映像機器の制約を創作的に再構築する、端末内完結の動画・写真加工アプリ。
 外部ライブラリ不要。WebGL 1 / GLSL ES 1.00、HTML、CSS、JavaScriptで実装。
@@ -36,6 +36,13 @@ index.html: UI、style.css: レスポンシブデザイン、engine.js: WebGL・
 
 Node.jsの構文チェック、MesaソフトウェアOpenGL ESによる3種類のGLSLプログラムのコンパイル・リンク、Chromium上での模擬GPU・模擬MediaRecorderを用いた9機種の切替、エンコーダー開始失敗からの再試行、録画中のUIロック、録画終了、PNGプレビュー、画像読み込み、短いWebMの読み込みと全体変換の自動停止テストに合格。Chromiumでは実際のWebGLコンテキストが生成できなかったため、実際の映像描画、動画エンコード、カメラ、iPhone実機、PWAインストールの動作は未確認です。
 MOV/HEVC/HEICの読み込みは端末のデコーダー依存。H.264 MP4、JPEG/PNGを推奨。MP4エンコードが利用不可の場合はWebMを出力。SNSがWebMを受け付けない場合はMP4への変換が必要。連続撮影・長時間録画・発熱は実機検証後に調整してください。
+
+## v0.1.3 — Rendering compatibility
+
+- WebGL優先。初期化失敗、GPUバッファ確保失敗、復旧失敗または8秒の復旧タイムアウト後にCanvas 2Dへ切替。録画・非同期処理が終わるまで切替を待つ。
+- COMPAT / 2Dは9機種の簡易モデル、低解像度長辺最大192px、内部更新最大12fps。GPU版と同一の質感ではない。縦型、撮影、読み込み、保存は共通UIを使用（ブラウザのMediaRecorder等への対応が必要）。
+- GPU diagnosticsで失敗段階・シェーダーログを表示。Retry WebGL / Reloadで再試行（最後の出力は先に保存）。
+- Safari実機での動作、実際のコンテキスト復旧、録画は未検証。
 
 ## v0.1.2 — Stability & Portrait
 
