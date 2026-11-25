@@ -8,7 +8,7 @@ A pocket video camera inspired by obsolete imaging systems.
 
 Choose a device, open the camera or import a file, and adjust the image. Record video or save a PNG. On iPhone, open in Safari and choose Add to Home Screen.
 
-Nine devices, live preview, portrait capture, presets and local processing. WebGL 1 is preferred; Canvas 2D is a reduced-fidelity fallback.
+Nine devices, live preview, portrait capture, Randomize, presets and local processing. WebGL 1 is preferred; Canvas 2D is a reduced-fidelity fallback.
 
 ## Run locally
 
@@ -24,7 +24,7 @@ Recording is real-time, up to 120 seconds. MP4 availability depends on the brows
 
 ## Development
 
-- `main`: stable release (v0.1.6).
+- `main`: stable release (v0.1.7).
 - `archive/v0.1.5`: preserved baseline.
 - `develop/experimental-devices`: independent experimental edition.
 

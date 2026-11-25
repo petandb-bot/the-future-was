@@ -4,7 +4,7 @@ let canvas=$('screen');
 const params=[['exposure','Exposure',-2,2,.05],['contrast','Contrast',.5,2.5,.05],['character','Character',0,1,.01],['memory','Memory',0,1,.01],['signal','Signal loss',0,1,.01],['texture','Display texture',0,1,.01],['rate','Internal frame rate',2,30,1],['scanSeconds','Scan period (s)',1,16,.5],['resolution','Sensor scale',.5,2,.25]];
 const mobile=matchMedia('(max-width: 760px) and (pointer: coarse)').matches;
 const portraitStart=mobile&&matchMedia('(orientation: portrait)').matches;
-let gpuState='starting',gpuEpoch=0,restoreTimer=null,gpuDetail='',fallbackReason='',mediaEpoch=0,photoPending=false;
+let gpuState='starting',gpuEpoch=0,restoreTimer=null,fallbackReason='',mediaEpoch=0,photoPending=false;
 let mode=0,s,engine,source='demo',input=null,stream=null,url=null,facing='environment',busy=false,rec=null,recStream=null,recTimer=null,recFailed=false,audioGraph=null,audioDest=null,lastResult=null,lastURL=null,lastStep=-1,lastPresent=-1,fpsStart=0,frames=0,dirty=true,lastError='',lastInputTime=-1,sourceUploaded=false,stopReason='',recordWhole=false,recordStart=0,bytesRecorded=0;
 const demo=document.createElement('canvas');demo.width=640;demo.height=480;const ctx=demo.getContext('2d',{alpha:false});
 const staging=document.createElement('canvas'),stageCtx=staging.getContext('2d',{alpha:false});
@@ -39,14 +39,14 @@ function updateSize(){
 }
 function effectiveRate(){return Math.min(s.rate,engine?.kind==='2d'?12:mobile?24:30);}
 function gpuReady(){return gpuState==='ready'&&!!engine&&!engine.isLost();}
-function reportGPU(message){gpuDetail=String(message);$('gpuDetail').textContent=gpuDetail;$('diagnostics').hidden=false;}
+function reportGPU(message){console.warn('[Renderer]',String(message));}
 function gpuFailure(message){
  reportGPU(message);
- if(engine?.kind==='2d'){gpuState='failed';$('gpu').textContent='DRAW ERROR';$('recover').hidden=false;status(message);if(rec){recFailed=true;stop('Drawing interrupted');}locks();return;}
+ if(engine?.kind==='2d'){gpuState='failed';status('Preview unavailable. Reopen the app.');if(rec){recFailed=true;stop('Drawing interrupted');}locks();return;}
  queueFallback(message);
 }
 function queueFallback(message){
- gpuEpoch++;fallbackReason=message;reportGPU(message);gpuState='fallback-pending';$('gpu').textContent='GPU FALLBACK';
+ gpuEpoch++;fallbackReason=message;reportGPU(message);gpuState='fallback-pending';
  if(rec){recFailed=true;stop('GPU interrupted');}locks();
 }
 function startFallback(){
@@ -60,9 +60,9 @@ function startFallback(){
   next.addEventListener('contextlost',()=>{if(canvas===next)gpuFailure('Canvas 2D context lost. Reload to retry.');});
   gpuState='ready';resetMemory();updateSize();
   if(gpuState!=='ready')return;
-  $('gpu').textContent='COMPAT / 2D';$('recover').hidden=false;
-  status('Compatibility mode · 12 FPS max');locks();
- }catch(e){gpuState='failed';$('gpu').textContent='DRAW ERROR';$('recover').hidden=false;reportGPU(fallbackReason+' | Canvas 2D: '+e.message);status('Both rendering backends failed.');locks();}
+  
+  status(canvas.captureStream&&window.MediaRecorder?'':'Video recording unavailable');locks();
+ }catch(e){gpuState='failed';reportGPU(fallbackReason+' | Canvas 2D: '+e.message);status('Preview unavailable. Reopen the app.');locks();}
 }
 function restoreGPU(){
  if(gpuState!=='restore-pending'||rec||busy||photoPending||document.hidden)return;
@@ -71,26 +71,26 @@ function restoreGPU(){
  try{
   engine.init();gpuState='ready';resetMemory();updateSize();
   if(gpuState!=='ready')return;
-  clearTimeout(restoreTimer);$('recover').hidden=true;$('gpu').textContent='WEBGL / LIVE';
-  status('WebGL recovered');locks();
+  clearTimeout(restoreTimer);
+  status('');locks();
  }catch(e){gpuFailure('WebGL recovery failed: '+e.message);}
 }
 function resetMemory(){engine?.reset();lastStep=-1;lastInputTime=-1;sourceUploaded=false;dirty=true;locks();}
-function sync(){const m=modes[mode];$('device').value=String(mode);for(const [k] of params){$('p-'+k).value=s[k];$('v-'+k).textContent=Number(s[k]).toFixed(k==='rate'?0:2);}$('row-scanSeconds').hidden=mode!==5;$('scanMode').parentElement.hidden=mode!==5;for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).value=s[k];updateSize();}
+function sync(){const m=modes[mode];$('device').value=String(mode);for(const [k] of params){$('p-'+k).value=s[k];$('v-'+k).textContent=Number(s[k]).toFixed(k==='rate'?0:2);}$('row-scanSeconds').hidden=mode!==5;$('scanMode').parentElement.hidden=mode!==5;for(const k of ['palette','aspect','size','scanMode','audio'])$(k).value=s[k];updateSize();}
 function choose(i){if(rec||busy||photoPending||!Number.isInteger(i))return;const common={aspect:s.aspect,size:s.size,audio:s.audio,seed:s.seed};mode=(i+modes.length)%modes.length;s={...defaults(mode),...common};resetMemory();sync();}
 function locks(){
  const lock=!!rec||busy||photoPending, ready=gpuReady();
- for(const id of ['camera','import','demo','device','reset','random','loadPreset','aspect','size','audio','p-resolution','scanMode','seed','play','seek','p-rate','palette','whole','format']) if($(id))$(id).disabled=lock||!ready;
+ for(const id of ['camera','import','demo','device','reset','random','loadPreset','aspect','size','audio','p-resolution','scanMode','play','seek','p-rate','palette','whole','format']) if($(id))$(id).disabled=lock||!ready;
  $('flip').disabled=lock||!ready||source!=='camera';
  $('record').disabled=busy||!ready||(rec?rec.state==='inactive'||!!rec.saveTimeout:(!canvas.captureStream||!window.MediaRecorder||engine.first));
- $('recover').disabled=lock;
+ 
  $('photo').disabled=busy||photoPending||!ready||!!rec||engine.first;
  $('record').disabled=$('record').disabled||photoPending;
  for(const key of ['exposure','contrast','character','memory','signal','texture','scanSeconds'])$('p-'+key).disabled=busy||photoPending||!ready;
  $('whole').disabled=lock||!ready||source!=='video';
 
 }
-function createUI(){modes.forEach((m,i)=>$('device').add(new Option(m.id,String(i))));$('device').onchange=()=>choose(Number($('device').value));params.forEach(([k,label,min,max,step],i)=>{const row=document.createElement('div');row.className='param';row.id='row-'+k;row.innerHTML=`<label for="p-${k}">${label}<output id="v-${k}"></output></label><input id="p-${k}" type="range" min="${min}" max="${max}" step="${step}">`;$(i<4?'basic':'extra').append(row);$('p-'+k).oninput=e=>{const value=Number(e.target.value);$('v-'+k).textContent=value.toFixed(k==='rate'?0:2);if(k==='resolution')return;s[k]=value;if(k==='rate'){updateSize();lastStep=-1;}dirty=true;};if(k==='resolution')$('p-'+k).onchange=e=>{if(rec||busy||photoPending||!gpuReady())return;s.resolution=Number(e.target.value);updateSize();resetMemory();};});['Device / colour','Neutral monochrome','Blue-grey','Amber'].forEach((p,i)=>$('palette').add(new Option(p,i)));for(const k of ['palette','aspect','size','scanMode','seed','audio'])$(k).onchange=()=>{s[k]=['aspect','audio'].includes(k)?$(k).value:Number($(k).value);if(k==='seed'){s.seed=clamp(Math.floor(s.seed||0),0,99999);$(k).value=s.seed;}if(k==='aspect'||k==='size')updateSize();if(k==='aspect')resetMemory();if(['scanMode','seed','palette'].includes(k))resetMemory();if(k==='audio'&&source==='camera')status('Tap Camera to apply audio');dirty=true;};$('reset').onclick=()=>choose(mode);$('random').onclick=()=>{s.seed=Math.floor(Math.random()*100000);let x=s.seed>>>0;const rnd=()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;};const d=defaults(mode);s.exposure=(rnd()-.5);s.contrast=.9+rnd()*.65;for(const k of ['character','memory','signal','texture'])s[k]=clamp(d[k]+(rnd()-.5)*.36,0,1);resetMemory();sync();};$('savePreset').onclick=()=>download(new Blob([JSON.stringify({version:1,device:modes[mode].id,settings:s},null,2)],{type:'application/json'}),'signal-preset.json');$('loadPreset').onclick=()=>$('presetFile').click();$('presetFile').onchange=async e=>{try{const f=e.target.files[0];if(!f||rec)return;const p=JSON.parse(await f.text());if(rec||busy)return;const i=modes.findIndex(m=>m.id===p.device);if(p.version!==1||i<0||!p.settings)throw Error('Unknown preset');const d=defaults(i),o=p.settings;for(const [k,,min,max] of params)if(Number.isFinite(o[k]))d[k]=clamp(o[k],min,max);for(const [k,min,max] of [['palette',0,3],['scanMode',0,1],['seed',0,99999]])if(Number.isFinite(o[k]))d[k]=clamp(Math.round(o[k]),min,max);if(['native','original','1:1','4:3','9:16','16:9'].includes(o.aspect))d.aspect=o.aspect;if([480,720,1080].includes(o.size))d.size=o.size;if(['silent','source'].includes(o.audio))d.audio=o.audio;mode=i;s=d;resetMemory();sync();status('Preset loaded.');}catch(err){status(err.message);}finally{e.target.value='';}};}
+function createUI(){modes.forEach((m,i)=>$('device').add(new Option(m.id,String(i))));$('device').onchange=()=>choose(Number($('device').value));params.forEach(([k,label,min,max,step],i)=>{const row=document.createElement('div');row.className='param';row.id='row-'+k;row.innerHTML=`<label for="p-${k}">${label}<output id="v-${k}"></output></label><input id="p-${k}" type="range" min="${min}" max="${max}" step="${step}">`;$(i<4?'basic':'extra').append(row);$('p-'+k).oninput=e=>{const value=Number(e.target.value);$('v-'+k).textContent=value.toFixed(k==='rate'?0:2);if(k==='resolution')return;s[k]=value;if(k==='rate'){updateSize();lastStep=-1;}dirty=true;};if(k==='resolution')$('p-'+k).onchange=e=>{if(rec||busy||photoPending||!gpuReady())return;s.resolution=Number(e.target.value);updateSize();resetMemory();};});['Device / colour','Neutral monochrome','Blue-grey','Amber'].forEach((p,i)=>$('palette').add(new Option(p,i)));for(const k of ['palette','aspect','size','scanMode','audio'])$(k).onchange=()=>{s[k]=['aspect','audio'].includes(k)?$(k).value:Number($(k).value);if(k==='aspect'||k==='size')updateSize();if(k==='aspect')resetMemory();if(['scanMode','palette'].includes(k))resetMemory();if(k==='audio'&&source==='camera')status('Tap Camera to apply audio');dirty=true;};$('reset').onclick=()=>choose(mode);$('random').onclick=()=>{s.seed=Math.floor(Math.random()*100000);let x=s.seed>>>0;const rnd=()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;};const d=defaults(mode);s.exposure=(rnd()-.5);s.contrast=.9+rnd()*.65;for(const k of ['character','memory','signal','texture'])s[k]=clamp(d[k]+(rnd()-.5)*.36,0,1);resetMemory();sync();};$('savePreset').onclick=()=>download(new Blob([JSON.stringify({version:1,device:modes[mode].id,settings:s},null,2)],{type:'application/json'}),'signal-preset.json');$('loadPreset').onclick=()=>$('presetFile').click();$('presetFile').onchange=async e=>{try{const f=e.target.files[0];if(!f||rec)return;const p=JSON.parse(await f.text());if(rec||busy)return;const i=modes.findIndex(m=>m.id===p.device);if(p.version!==1||i<0||!p.settings)throw Error('Unknown preset');const d=defaults(i),o=p.settings;for(const [k,,min,max] of params)if(Number.isFinite(o[k]))d[k]=clamp(o[k],min,max);for(const [k,min,max] of [['palette',0,3],['scanMode',0,1],['seed',0,99999]])if(Number.isFinite(o[k]))d[k]=clamp(Math.round(o[k]),min,max);if(['native','original','1:1','4:3','9:16','16:9'].includes(o.aspect))d.aspect=o.aspect;if([480,720,1080].includes(o.size))d.size=o.size;if(['silent','source'].includes(o.audio))d.audio=o.audio;mode=i;s=d;resetMemory();sync();status('Preset loaded.');}catch(err){status(err.message);}finally{e.target.value='';}};}
 function release(){
  const old=stream;stream=null;old?.getTracks().forEach(t=>t.stop());
  video.pause();video.srcObject=null;video.removeAttribute('src');video.load();
@@ -173,7 +173,7 @@ function loop(ms){
    }
   }
   if(dirty||(rec&&t-lastPresent>=1/(mobile?24:30)-.003)){engine.present(mode,s);dirty=false;lastPresent=t;}
-  if(t-fpsStart>=1){$('fps').textContent=`${Math.round(frames/(t-fpsStart))} ${engine.kind==='2d'?'CPU':'GPU'} updates/s`;fpsStart=t;frames=0;}
+  if(t-fpsStart>=1){$('fps').textContent=`${Math.round(frames/(t-fpsStart))} fps`;fpsStart=t;frames=0;}
   if(source==='video'&&!$('seek').matches(':active')){if(Number.isFinite(video.duration)){$('seek').max=video.duration;$('seek').value=video.currentTime;}$('position').textContent=timeLabel(video.currentTime);}
   lastError='';
  }catch(e){if(!gpuReady())return;if(lastError!==e.message){lastError=e.message;gpuFailure('Render error: '+e.message);if(rec)stop('Render interrupted');}}
@@ -259,13 +259,12 @@ function stop(reason=''){
 $('camera').onclick=camera;$('flip').onclick=()=>{facing=facing==='user'?'environment':'user';camera();};$('demo').onclick=useDemo;$('import').onclick=()=>$('file').click();$('file').onchange=e=>{importFile(e.target.files[0]);e.target.value='';};$('play').onclick=()=>video.paused?video.play().catch(e=>status(e.message)):video.pause();video.addEventListener('play',updateSourceUI);video.addEventListener('pause',updateSourceUI);$('seek').oninput=e=>{video.currentTime=Number(e.target.value);resetMemory();};video.addEventListener('resize',()=>{if(!rec&&(source==='camera'||source==='video')){updateSize();sourceUploaded=false;}});video.addEventListener('ended',()=>{if(rec&&recordWhole)stop('Whole clip finished');});video.addEventListener('error',()=>{if(source==='video'&&rec)stop('Source decoding interrupted');});video.addEventListener('seeked',()=>{if(source==='video'&&!rec&&!busy)resetMemory();});$('photo').onclick=photo;$('record').onclick=()=>rec?stop():record();$('share').onclick=()=>{$('result').hidden=false;};$('nativeShare').onclick=share;$('closeResult').onclick=()=>{$('resultVideo').pause();$('result').hidden=true;};$('resultVideo').addEventListener('error',()=>{if(lastResult?.blob.type.startsWith('video/'))$('resultInfo').textContent+=' · Preview unavailable; check downloaded file.';});
 function beginLoss(message){
  if(gpuState==='lost'||gpuState==='fallback-pending'||engine?.kind==='2d')return;
- gpuEpoch++;gpuState='lost';$('gpu').textContent='GPU LOST';
- $('recover').hidden=false;reportGPU(message);status('Recovering…');if(rec){recFailed=true;stop('GPU context lost');}
+ gpuEpoch++;gpuState='lost';
+ reportGPU(message);status('Recovering…');if(rec){recFailed=true;stop('GPU context lost');}
  clearTimeout(restoreTimer);restoreTimer=setTimeout(()=>{if(gpuState==='lost')queueFallback('WebGL restoration timed out (8 seconds).');},8000);locks();
 }
 canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();if(e.target===canvas)beginLoss('WebGL context lost. '+(e.statusMessage||''));});
-canvas.addEventListener('webglcontextrestored',e=>{if(e.target!==canvas||engine?.kind==='2d'||gpuState!=='lost')return;clearTimeout(restoreTimer);gpuState='restore-pending';$('gpu').textContent='GPU RECOVERING';locks();restoreGPU();});
-$('recover').onclick=()=>{if(!rec&&!busy){if(lastResult&&!confirm('Save the last take before retrying WebGL. Reload anyway?'))return;location.reload();}};
+canvas.addEventListener('webglcontextrestored',e=>{if(e.target!==canvas||engine?.kind==='2d'||gpuState!=='lost')return;clearTimeout(restoreTimer);gpuState='restore-pending';locks();restoreGPU();});
 document.addEventListener('visibilitychange',()=>{
  if(document.hidden){gpuEpoch++;mediaEpoch++;if(rec)stop('App moved to background');}
  else{lastStep=-1;sourceUploaded=false;if(engine)engine.lastTime=null;restoreGPU();if(gpuState==='fallback-pending')startFallback();}
@@ -273,16 +272,11 @@ document.addEventListener('visibilitychange',()=>{
 window.addEventListener('pagehide',()=>{gpuEpoch++;mediaEpoch++;if(rec)stop();release();source='demo';});
 window.addEventListener('pageshow',e=>{if(e.persisted&&engine)changed('demo','DEMO SIGNAL');});
 s=defaults(mode);createUI();sync();updateSourceUI();
-try{engine=new window.SignalEngine(canvas);gpuState='ready';$('gpu').textContent='WEBGL / LIVE';updateSize();locks();if(gpuReady())status(canvas.captureStream&&window.MediaRecorder?'':'Video recording unavailable');}
+try{engine=new window.SignalEngine(canvas);gpuState='ready';updateSize();locks();if(gpuReady())status(canvas.captureStream&&window.MediaRecorder?'':'Video recording unavailable');}
 catch(e){gpuFailure(e.message);}
 if(gpuState==='fallback-pending')startFallback();
 requestAnimationFrame(loop);
 if('serviceWorker'in navigator&&location.protocol.startsWith('http')){
- let hadController=!!navigator.serviceWorker.controller;
- navigator.serviceWorker.addEventListener('controllerchange',()=>{
-  if(hadController){$('updateNotice').hidden=false;}
-  hadController=true;
- });
  navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(e=>console.warn('Service worker update:',e));
 }
 })();
