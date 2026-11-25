@@ -10,30 +10,35 @@ const demo=document.createElement('canvas');demo.width=640;demo.height=480;const
 const staging=document.createElement('canvas'),stageCtx=staging.getContext('2d',{alpha:false});
 function uploadInput(el,w,h){if(engine.kind==='2d')return engine.upload(el,w,h);const f=Math.min(1,(mobile?720:1280)/Math.max(w,h));if(f===1)return engine.upload(el,w,h);const a=Math.max(1,Math.round(w*f)),b=Math.max(1,Math.round(h*f));if(staging.width!==a||staging.height!==b){staging.width=a;staging.height=b;}stageCtx.drawImage(el,0,0,a,b);return engine.upload(staging,a,b);}
 const status=t=>$('status').textContent=t;
-function updateSourceUI(){const active=source==='camera'?'camera':source==='demo'?'demo':'import';for(const id of ['camera','import','demo'])$(id).setAttribute('aria-pressed',String(id===active));$('play').textContent=video.paused?'Play':'Pause';}
+function updateSourceUI(){const active=source==='camera'?'camera':source==='demo'?null:'import';for(const id of ['camera','import'])$(id).setAttribute('aria-pressed',String(id===active));$('play').textContent=video.paused?'Play':'Pause';}
 function defaults(i){const m=modes[i];return {exposure:0,contrast:1.15,character:m.char,memory:m.mem,signal:m.signal,texture:m.texture,rate:m.fps,scanSeconds:8,resolution:1,palette:m.pal,seed:1987,scanMode:0,aspect:portraitStart?'9:16':'native',size:mobile?480:720,audio:'silent'};}
 function timeLabel(n){n=Math.floor(Math.max(0,n||0));return `${Math.floor(n/60)}:${String(n%60).padStart(2,'0')}`;}
 function sourceSize(){return source==='demo'?[640,480]:source==='photo'?[input?.naturalWidth||640,input?.naturalHeight||480]:[video.videoWidth||640,video.videoHeight||480];}
 function geometry(m,s,sourceWH){
- const native=[Math.max(2,Math.round(m.w*s.resolution)),Math.max(2,Math.round(m.h*s.resolution))];
- const [a,b]=s.aspect==='native'?native:s.aspect==='original'?sourceWH:s.aspect.split(':').map(Number);
- const portrait=a<b&&s.aspect!=='native';
- const [w,h]=portrait?[Math.max(2,Math.round(Math.max(...native)*a/b)),Math.max(...native)]:native;
- let ow=s.size*a/Math.max(a,b),oh=s.size*b/Math.max(a,b);
- if(s.aspect==='native'){const f=Math.max(1,Math.floor(s.size/Math.max(w,h)));if(w*f%2===0&&h*f%2===0){ow=w*f;oh=h*f;}}
+ const pair=s.aspect==='native'?[m.w,m.h]:s.aspect==='original'?sourceWH:s.aspect.split(':').map(Number);
+ const [aw,ah]=pair.map(n=>Math.max(1,Math.round(n)||1));
+ const gcd=(x,y)=>{while(y){const t=x%y;x=y;y=t;}return x;};
+ const g=gcd(aw,ah),rw=aw/g,rh=ah/g,limit=s.size;
+ const unit=2*Math.max(rw,rh),multiple=2*Math.floor(limit/unit);
  const even=n=>Math.max(2,Math.round(n/2)*2);
- return {w,h,ow:even(ow),oh:even(oh),portrait};
+ const exact=multiple>0&&(s.aspect!=='original'||multiple*Math.max(rw,rh)>=limit*.95);
+ const ow=exact?rw*multiple:even(limit*aw/Math.max(aw,ah));
+ const oh=exact?rh*multiple:even(limit*ah/Math.max(aw,ah));
+ const long=Math.max(2,Math.round(Math.max(m.w,m.h)*s.resolution));
+ const w=Math.max(2,Math.round(long*ow/Math.max(ow,oh)));
+ const h=Math.max(2,Math.round(long*oh/Math.max(ow,oh)));
+ return {w,h,ow,oh};
 }
 function updateSize(){
  if(rec||photoPending||!engine||gpuState!=='ready'||engine.isLost())return;
- let {w,h,ow,oh,portrait}=geometry(modes[mode],s,sourceSize());
+ let {w,h,ow,oh}=geometry(modes[mode],s,sourceSize());
  if(engine.kind==='2d'){const scale=Math.min(1,192/Math.max(w,h));w=Math.max(2,Math.round(w*scale));h=Math.max(2,Math.round(h*scale));}
  try{
   if(canvas.width!==ow)canvas.width=ow;
   if(canvas.height!==oh)canvas.height=oh;
   engine.configure(w,h);
-  $('stage').classList.toggle('portrait',portrait);
-  $('spec').textContent=w+'×'+h+' / '+effectiveRate()+' FPS → '+ow+'×'+oh;
+  $('stage').style.setProperty('--frame-ratio',String(ow/oh));
+  $('spec').textContent=ow+' × '+oh;
   dirty=true;
  }catch(e){if(engine.isLost())return;gpuFailure('GPU allocation failed: '+e.message);}
 }
@@ -80,7 +85,7 @@ function sync(){const m=modes[mode];$('device').value=String(mode);for(const [k]
 function choose(i){if(rec||busy||photoPending||!Number.isInteger(i))return;const common={aspect:s.aspect,size:s.size,audio:s.audio,seed:s.seed};mode=(i+modes.length)%modes.length;s={...defaults(mode),...common};resetMemory();sync();}
 function locks(){
  const lock=!!rec||busy||photoPending, ready=gpuReady();
- for(const id of ['camera','import','demo','device','reset','random','loadPreset','aspect','size','audio','p-resolution','scanMode','play','seek','p-rate','palette','whole','format']) if($(id))$(id).disabled=lock||!ready;
+ for(const id of ['camera','import','device','reset','random','loadPreset','aspect','size','audio','p-resolution','scanMode','play','seek','p-rate','palette','whole','format']) if($(id))$(id).disabled=lock||!ready;
  $('flip').disabled=lock||!ready||source!=='camera';
  $('record').disabled=busy||!ready||(rec?rec.state==='inactive'||!!rec.saveTimeout:(!canvas.captureStream||!window.MediaRecorder||engine.first));
  
@@ -90,7 +95,7 @@ function locks(){
  $('whole').disabled=lock||!ready||source!=='video';
 
 }
-function createUI(){modes.forEach((m,i)=>$('device').add(new Option(m.id,String(i))));$('device').onchange=()=>choose(Number($('device').value));params.forEach(([k,label,min,max,step],i)=>{const row=document.createElement('div');row.className='param';row.id='row-'+k;row.innerHTML=`<label for="p-${k}">${label}<output id="v-${k}"></output></label><input id="p-${k}" type="range" min="${min}" max="${max}" step="${step}">`;$(i<4?'basic':'extra').append(row);$('p-'+k).oninput=e=>{const value=Number(e.target.value);$('v-'+k).textContent=value.toFixed(k==='rate'?0:2);if(k==='resolution')return;s[k]=value;if(k==='rate'){updateSize();lastStep=-1;}dirty=true;};if(k==='resolution')$('p-'+k).onchange=e=>{if(rec||busy||photoPending||!gpuReady())return;s.resolution=Number(e.target.value);updateSize();resetMemory();};});['Device / colour','Neutral monochrome','Blue-grey','Amber'].forEach((p,i)=>$('palette').add(new Option(p,i)));for(const k of ['palette','aspect','size','scanMode','audio'])$(k).onchange=()=>{s[k]=['aspect','audio'].includes(k)?$(k).value:Number($(k).value);if(k==='aspect'||k==='size')updateSize();if(k==='aspect')resetMemory();if(['scanMode','palette'].includes(k))resetMemory();if(k==='audio'&&source==='camera')status('Tap Camera to apply audio');dirty=true;};$('reset').onclick=()=>choose(mode);$('random').onclick=()=>{s.seed=Math.floor(Math.random()*100000);let x=s.seed>>>0;const rnd=()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;};const d=defaults(mode);s.exposure=(rnd()-.5);s.contrast=.9+rnd()*.65;for(const k of ['character','memory','signal','texture'])s[k]=clamp(d[k]+(rnd()-.5)*.36,0,1);resetMemory();sync();};$('savePreset').onclick=()=>download(new Blob([JSON.stringify({version:1,device:modes[mode].id,settings:s},null,2)],{type:'application/json'}),'signal-preset.json');$('loadPreset').onclick=()=>$('presetFile').click();$('presetFile').onchange=async e=>{try{const f=e.target.files[0];if(!f||rec)return;const p=JSON.parse(await f.text());if(rec||busy)return;const i=modes.findIndex(m=>m.id===p.device);if(p.version!==1||i<0||!p.settings)throw Error('Unknown preset');const d=defaults(i),o=p.settings;for(const [k,,min,max] of params)if(Number.isFinite(o[k]))d[k]=clamp(o[k],min,max);for(const [k,min,max] of [['palette',0,3],['scanMode',0,1],['seed',0,99999]])if(Number.isFinite(o[k]))d[k]=clamp(Math.round(o[k]),min,max);if(['native','original','1:1','4:3','9:16','16:9'].includes(o.aspect))d.aspect=o.aspect;if([480,720,1080].includes(o.size))d.size=o.size;if(['silent','source'].includes(o.audio))d.audio=o.audio;mode=i;s=d;resetMemory();sync();status('Preset loaded.');}catch(err){status(err.message);}finally{e.target.value='';}};}
+function createUI(){modes.forEach((m,i)=>$('device').add(new Option(m.id,String(i))));$('device').onchange=()=>choose(Number($('device').value));params.forEach(([k,label,min,max,step],i)=>{const row=document.createElement('div');row.className='param';row.id='row-'+k;row.innerHTML=`<label for="p-${k}">${label}<output id="v-${k}"></output></label><input id="p-${k}" type="range" min="${min}" max="${max}" step="${step}">`;$(i<4?'basic':'extra').append(row);$('p-'+k).oninput=e=>{const value=Number(e.target.value);$('v-'+k).textContent=value.toFixed(k==='rate'?0:2);if(k==='resolution')return;s[k]=value;if(k==='rate'){updateSize();lastStep=-1;}dirty=true;};if(k==='resolution')$('p-'+k).onchange=e=>{if(rec||busy||photoPending||!gpuReady())return;s.resolution=Number(e.target.value);updateSize();resetMemory();};});['Device / colour','Neutral monochrome','Blue-grey','Amber'].forEach((p,i)=>$('palette').add(new Option(p,i)));for(const k of ['palette','aspect','size','scanMode','audio'])$(k).onchange=()=>{s[k]=['aspect','audio'].includes(k)?$(k).value:Number($(k).value);if(k==='aspect'||k==='size'){updateSize();resetMemory();}if(['scanMode','palette'].includes(k))resetMemory();if(k==='audio'&&source==='camera')status('Tap Camera to apply audio');dirty=true;};$('reset').onclick=()=>choose(mode);$('random').onclick=()=>{s.seed=Math.floor(Math.random()*100000);let x=s.seed>>>0;const rnd=()=>{x=(Math.imul(x,1664525)+1013904223)>>>0;return x/4294967296;};const d=defaults(mode);s.exposure=(rnd()-.5);s.contrast=.9+rnd()*.65;for(const k of ['character','memory','signal','texture'])s[k]=clamp(d[k]+(rnd()-.5)*.36,0,1);resetMemory();sync();};$('savePreset').onclick=()=>download(new Blob([JSON.stringify({version:1,device:modes[mode].id,settings:s},null,2)],{type:'application/json'}),'signal-preset.json');$('loadPreset').onclick=()=>$('presetFile').click();$('presetFile').onchange=async e=>{try{const f=e.target.files[0];if(!f||rec)return;const p=JSON.parse(await f.text());if(rec||busy)return;const i=modes.findIndex(m=>m.id===p.device);if(p.version!==1||i<0||!p.settings)throw Error('Unknown preset');const d=defaults(i),o=p.settings;for(const [k,,min,max] of params)if(Number.isFinite(o[k]))d[k]=clamp(o[k],min,max);for(const [k,min,max] of [['palette',0,3],['scanMode',0,1],['seed',0,99999]])if(Number.isFinite(o[k]))d[k]=clamp(Math.round(o[k]),min,max);if(['native','original','1:1','4:3','9:16','16:9'].includes(o.aspect))d.aspect=o.aspect;if([480,720,1080].includes(o.size))d.size=o.size;if(['silent','source'].includes(o.audio))d.audio=o.audio;mode=i;s=d;resetMemory();sync();status('Preset loaded.');}catch(err){status(err.message);}finally{e.target.value='';}};}
 function release(){
  const old=stream;stream=null;old?.getTracks().forEach(t=>t.stop());
  video.pause();video.srcObject=null;video.removeAttribute('src');video.load();
@@ -102,7 +107,6 @@ function changed(type,label){
  $('wholeRow').hidden=type!=='video';$('seek').value=0;$('position').textContent='0:00';
  resetMemory();updateSize();locks();
 }
-function useDemo(){if(rec||busy||photoPending)return;release();changed('demo','DEMO SIGNAL');status('');}
 function waitForMedia(el,event,ready,ms=12000){
  if(ready())return Promise.resolve();if(el.error)return Promise.reject(Error(el.error.message||'Media could not be decoded.'));
  return new Promise((resolve,reject)=>{
@@ -129,7 +133,7 @@ async function camera(){
  if(rec||busy||photoPending)return;busy=true;const epoch=++mediaEpoch;locks();release();changed('demo','DEMO SIGNAL');status('Opening camera…');
  try{
   if(!navigator.mediaDevices?.getUserMedia)throw Error('Camera requires HTTPS or localhost.');
-  const portrait=s.aspect==='9:16';const options={video:{facingMode:{ideal:facing},width:{ideal:portrait?540:960},height:{ideal:portrait?960:540},frameRate:{ideal:mobile?20:24,max:mobile?24:30}},audio:s.audio==='source'};
+  const portrait=geometry(modes[mode],s,sourceSize()).oh>geometry(modes[mode],s,sourceSize()).ow;const options={video:{facingMode:{ideal:facing},width:{ideal:portrait?540:960},height:{ideal:portrait?960:540},frameRate:{ideal:mobile?20:24,max:mobile?24:30}},audio:s.audio==='source'};
   try{stream=await requestCamera(options,epoch);}catch(e){assertMedia(epoch);if(options.audio&&['NotFoundError','NotAllowedError','OverconstrainedError','NotReadableError'].includes(e.name))stream=await requestCamera({...options,audio:false},epoch);else throw e;}
   assertMedia(epoch);
   video.srcObject=stream;video.muted=true;await withTimeout(video.play(),12000,'Camera playback timed out.');
@@ -256,7 +260,7 @@ function stop(reason=''){
  r.saveTimeout=setTimeout(()=>{if(rec!==r)return;recFailed=true;finish(r,r.savedChunks||[]);status('Encoder finalization timed out. Check partial take, or try 480 px.');},12000);
  try{if(r.state!=='inactive')r.stop();}catch(e){recFailed=true;finish(r,r.savedChunks||[]);status('Recorder: '+e.message);}
 }
-$('camera').onclick=camera;$('flip').onclick=()=>{facing=facing==='user'?'environment':'user';camera();};$('demo').onclick=useDemo;$('import').onclick=()=>$('file').click();$('file').onchange=e=>{importFile(e.target.files[0]);e.target.value='';};$('play').onclick=()=>video.paused?video.play().catch(e=>status(e.message)):video.pause();video.addEventListener('play',updateSourceUI);video.addEventListener('pause',updateSourceUI);$('seek').oninput=e=>{video.currentTime=Number(e.target.value);resetMemory();};video.addEventListener('resize',()=>{if(!rec&&(source==='camera'||source==='video')){updateSize();sourceUploaded=false;}});video.addEventListener('ended',()=>{if(rec&&recordWhole)stop('Whole clip finished');});video.addEventListener('error',()=>{if(source==='video'&&rec)stop('Source decoding interrupted');});video.addEventListener('seeked',()=>{if(source==='video'&&!rec&&!busy)resetMemory();});$('photo').onclick=photo;$('record').onclick=()=>rec?stop():record();$('share').onclick=()=>{$('result').hidden=false;};$('nativeShare').onclick=share;$('closeResult').onclick=()=>{$('resultVideo').pause();$('result').hidden=true;};$('resultVideo').addEventListener('error',()=>{if(lastResult?.blob.type.startsWith('video/'))$('resultInfo').textContent+=' · Preview unavailable; check downloaded file.';});
+$('camera').onclick=camera;$('flip').onclick=()=>{facing=facing==='user'?'environment':'user';camera();};$('import').onclick=()=>$('file').click();$('file').onchange=e=>{importFile(e.target.files[0]);e.target.value='';};$('play').onclick=()=>video.paused?video.play().catch(e=>status(e.message)):video.pause();video.addEventListener('play',updateSourceUI);video.addEventListener('pause',updateSourceUI);$('seek').oninput=e=>{video.currentTime=Number(e.target.value);resetMemory();};video.addEventListener('resize',()=>{if(!rec&&(source==='camera'||source==='video')){updateSize();resetMemory();}});video.addEventListener('ended',()=>{if(rec&&recordWhole)stop('Whole clip finished');});video.addEventListener('error',()=>{if(source==='video'&&rec)stop('Source decoding interrupted');});video.addEventListener('seeked',()=>{if(source==='video'&&!rec&&!busy)resetMemory();});$('photo').onclick=photo;$('record').onclick=()=>rec?stop():record();$('share').onclick=()=>{$('result').hidden=false;};$('nativeShare').onclick=share;$('closeResult').onclick=()=>{$('resultVideo').pause();$('result').hidden=true;};$('resultVideo').addEventListener('error',()=>{if(lastResult?.blob.type.startsWith('video/'))$('resultInfo').textContent+=' · Preview unavailable; check downloaded file.';});
 function beginLoss(message){
  if(gpuState==='lost'||gpuState==='fallback-pending'||engine?.kind==='2d')return;
  gpuEpoch++;gpuState='lost';

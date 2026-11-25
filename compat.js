@@ -22,7 +22,7 @@ class CompatEngine{
   const w=this.w,h=this.h;if(!w||!h||!this.source)return;
   const dt=this.lastTime===null?1/12:clamp(now-this.lastTime,0,.5);this.lastTime=now;
   const prior=this.phase;this.phase=(prior+dt/Math.max(1,s.scanSeconds))%1;
-  const wrap=this.phase<prior,ratio=w/h,srcRatio=this.sw/this.sh;
+  const wrap=this.phase<prior,ratio=this.canvas.width/this.canvas.height,srcRatio=this.sw/this.sh;
   const cw=srcRatio>ratio?this.sh*ratio:this.sw,ch=srcRatio>ratio?this.sh:this.sw/ratio;
   const ctx=this.ctx;ctx.setTransform(mirror?-1:1,0,0,1,mirror?w:0,0);
   ctx.drawImage(this.source,(this.sw-cw)/2,(this.sh-ch)/2,cw,ch,0,0,w,h);ctx.setTransform(1,0,0,1,0,0);
@@ -59,10 +59,10 @@ class CompatEngine{
  }
  present(mode,s){
   if(this.first||this.isLost())return;
-  const c=this.canvas,ctx=this.out,scale=Math.min(c.width/this.w,c.height/this.h),w=this.w*scale,h=this.h*scale;
+  const c=this.canvas,ctx=this.out,scale=Math.min(c.width/this.w,c.height/this.h),w=c.width,h=c.height;
   ctx.fillStyle='#080908';ctx.fillRect(0,0,c.width,c.height);ctx.imageSmoothingEnabled=false;
-  ctx.drawImage(this.surface,(c.width-w)/2,(c.height-h)/2,w,h);
-  if(s.texture>.01&&scale>=3){ctx.fillStyle='rgba(0,0,0,'+(s.texture*.15)+')';const top=(c.height-h)/2,left=(c.width-w)/2;for(let j=0;j<this.h;j++)ctx.fillRect(left,top+j*scale,w,1);}
+  ctx.drawImage(this.surface,0,0,w,h);
+  if(s.texture>.01&&scale>=3){ctx.fillStyle='rgba(0,0,0,'+(s.texture*.15)+')';const top=(c.height-h)/2,left=(c.width-w)/2;for(let j=0;j<this.h;j++)ctx.fillRect(left,top+j*h/this.h,w,1);}
  }
 }
 window.SignalCompatEngine=CompatEngine;
